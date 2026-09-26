@@ -101,3 +101,30 @@ test("quote reference rejects a missing or nonfinal sequence", async () => {
     await assert.rejects(getTopicMessageBySequence(config, topicId, 10), /does not exist/);
   } finally { globalThis.fetch = previous; }
 });
+
+test("exact quote reference follows a Mirror page boundary for interleaved chunks", async () => {
+  const first = row(20, "first", { initial_transaction_id: initialTransactionId, number: 1, total: 2 });
+  const last = row(50, "last", { initial_transaction_id: initialTransactionId, number: 2, total: 2 });
+  const previous = globalThis.fetch;
+  let pages = 0;
+  globalThis.fetch = async input => {
+    const url = new URL(input);
+    if (url.pathname === `/api/v1/topics/${topicId}`) {
+      return Response.json({ topic_id: topicId, deleted: false, submit_key: null });
+    }
+    assert.equal(url.pathname, `/api/v1/topics/${topicId}/messages`);
+    pages++;
+    if (pages === 1) {
+      assert.equal(url.searchParams.get("sequencenumber"), "lte:50");
+      return Response.json({ messages: [last, ...Array.from({ length: 24 }, (_, i) => row(49 - i, "other", null))],
+        links: { next: `/api/v1/topics/${topicId}/messages?limit=25&order=desc&sequencenumber=lte:50&timestamp=lt:1790350001.000000026` } });
+    }
+    assert.equal(url.searchParams.get("timestamp"), "lt:1790350001.000000026");
+    return Response.json({ messages: [row(25, "other", null), first], links: { next: null } });
+  };
+  try {
+    const result = await getTopicMessageBySequence(networkConfigFromEnv({ HEDERA_NETWORK: "testnet" }), topicId, 50);
+    assert.equal(Buffer.from(result.bytes).toString(), "firstlast");
+    assert.equal(pages, 2);
+  } finally { globalThis.fetch = previous; }
+});

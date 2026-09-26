@@ -121,6 +121,8 @@ The public template must describe exactly which live data and payment flows pass
 
 **Files:** `session.ts`, `frames.ts`, persistent gateway and legacy QUIC adapter, WSS client and session view. **Interface:** start/stop operations carry an authenticated unique session ID; each received frame remains `Uint8Array` with checked sender, receive time and format; state machine has explicit stale/error/teardown states. Durable storage records owner, nonces and session lifecycle. **Checks:** browser opens WSS backed by a real legacy seller, receives exact bytes, stops, reconnects with a new session, rejects old frames; no-data timeout and control-heartbeat-only scenario show stale; malformed payload and backpressure are bounded; remote TLS/origin and UDP reachability are deployment tests. **Pass:** a working application-level stream carrying actual seller bytes; zero UTF-8 replacement before binary decoding. **Stop:** generated demo frames, a peer listed in heartbeat treated as a healthy stream, or an inbound router rule assumed on this host.
 
+**Current slice:** gateway connection start/close/interruption and delivered-byte count now persist to an owner-only journal, including recovery from a deliberate remote process kill. It has no customer owner field or browser-initiated HCS request yet; those remain the Task 5 completion gates.
+
 - [x] Run a live legacy seller and browser through the complete request/connect/data/stop cycle using a reachable Mumbai UDP route and WSS gateway.
 - [ ] Test reconnect, stale data, cleanup and bounded buffering with binary fixtures.
 - [x] Record the local app/browser and remote TLS/WSS gateway proof separately; a hosted public app with customer authentication remains open.
