@@ -64,13 +64,15 @@ export async function POST(request: Request): Promise<Response> {
     const health: unknown = await healthResponse.json();
     if (!health || typeof health !== "object" ||
         (health as Record<string, unknown>).network !== "testnet" ||
-        (health as Record<string, unknown>).sellerAccount !== sellerAccount) {
+        (health as Record<string, unknown>).sellerAccount !== sellerAccount ||
+        typeof (health as Record<string, unknown>).instanceId !== "string" ||
+        !/^[0-9a-f]{32}$/.test((health as Record<string, string>).instanceId)) {
       throw new Error("Gateway seller or network mismatch");
     }
     const expiry = Math.floor(Date.now() / 1000) + 45;
     const nonce = randomBytes(16).toString("hex");
     const signature = createHmac("sha256", Buffer.from(token, "hex"))
-      .update(`v1:${expiry}:${nonce}:${sellerAccount}`).digest("hex");
+      .update(`v1:${expiry}:${nonce}:${sellerAccount}:${(health as Record<string, string>).instanceId}`).digest("hex");
     return Response.json({ url: url.href, sellerAccount, ticket: `auth.v1.${expiry}.${nonce}.${signature}` }, {
       headers: { "Cache-Control": "no-store" },
     });

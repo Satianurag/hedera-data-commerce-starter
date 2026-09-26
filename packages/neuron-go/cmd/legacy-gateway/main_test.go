@@ -26,13 +26,14 @@ func TestFullBrowserQueueStopsSellerStream(t *testing.T) {
 
 func TestRejectedWebSocketRequestDoesNotConsumeTicket(t *testing.T) {
 	secret := make([]byte, 32)
+	instanceID := "0123456789abcdef0123456789abcdef"
 	now := time.Now()
 	expiry := strconv.FormatInt(now.Unix()+45, 10)
 	nonce := "00112233445566778899aabbccddeeff"
 	mac := hmac.New(sha256.New, secret)
-	_, _ = mac.Write([]byte("v1:" + expiry + ":" + nonce + ":0.0.4318411"))
+	_, _ = mac.Write([]byte("v1:" + expiry + ":" + nonce + ":0.0.4318411:" + instanceID))
 	ticket := "auth.v1." + expiry + "." + nonce + "." + hex.EncodeToString(mac.Sum(nil))
-	g := &gateway{origin: "http://localhost:3000", sellerAccount: "0.0.4318411", secret: secret}
+	g := &gateway{origin: "http://localhost:3000", sellerAccount: "0.0.4318411", secret: secret, instanceID: instanceID}
 	request := func() *http.Request {
 		r := httptest.NewRequest(http.MethodGet, "http://localhost:9080/stream", nil)
 		r.Header.Set("Origin", g.origin)
@@ -62,10 +63,11 @@ func TestTicketBindsSellerAndExpiry(t *testing.T) {
 	now := time.Unix(1_790_405_500, 0)
 	expiry := strconv.FormatInt(now.Unix()+45, 10)
 	nonce := "00112233445566778899aabbccddeeff"
+	instanceID := "0123456789abcdef0123456789abcdef"
 	mac := hmac.New(sha256.New, secret)
-	_, _ = mac.Write([]byte("v1:" + expiry + ":" + nonce + ":0.0.4318411"))
+	_, _ = mac.Write([]byte("v1:" + expiry + ":" + nonce + ":0.0.4318411:" + instanceID))
 	ticket := "auth.v1." + expiry + "." + nonce + "." + hex.EncodeToString(mac.Sum(nil))
-	g := &gateway{sellerAccount: "0.0.4318411", secret: secret}
+	g := &gateway{sellerAccount: "0.0.4318411", secret: secret, instanceID: instanceID}
 	if !g.validTicket(ticket, now) {
 		t.Fatal("valid seller ticket rejected")
 	}
@@ -85,5 +87,10 @@ func TestTicketBindsSellerAndExpiry(t *testing.T) {
 	g.sellerAccount = "0.0.6340259"
 	if g.validTicket(ticket, now) {
 		t.Fatal("ticket accepted for another seller")
+	}
+	g.sellerAccount = "0.0.4318411"
+	g.instanceID = "fedcba9876543210fedcba9876543210"
+	if g.validTicket(ticket, now) {
+		t.Fatal("ticket accepted after gateway restart")
 	}
 }

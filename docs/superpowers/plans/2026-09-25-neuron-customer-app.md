@@ -4,9 +4,9 @@
 
 **Goal:** Build a reproducible Scaffold-HBAR customer application template that proves a signed Neuron service session and Hedera testnet evidence, then adds independently gated live-seller commerce and a separate mainnet release.
 
-**Target architecture:** The npm monorepo has a Next.js customer app, focused Neuron/Hedera reader, Go HCS writer and legacy QUIC/WebSocket gateway, and Foundry native-HBAR escrow package. Candidate HCS, a real legacy-seller stream in the Next.js browser, and distinct-account escrow release/refund transactions passed on testnet. The current read pages use the live legacy directory and real HCS/Mirror data. The local testnet stream page uses a loopback gateway and single-use ticket; durable customer sessions and remote TLS/WSS deployment remain. Signed spec-first sellers, quote-bound checkout and mainnet deployment each require independent proof.
+**Target architecture:** The npm monorepo has a Next.js customer app, focused Neuron/Hedera reader, Go HCS writer and legacy QUIC/WebSocket gateway, and Foundry native-HBAR escrow package. Candidate HCS, a real legacy-seller stream in the Next.js browser over local and remote WSS, and distinct-account escrow release/refund transactions passed on testnet. The current read pages use the live legacy directory and real HCS/Mirror data. The testnet stream page uses a single-use ticket from a loopback-only app; durable customer ownership remains. A public CLI scaffold and source-linked HCS transaction passed. Signed spec-first sellers, external quote-bound checkout and mainnet deployment each require independent proof.
 
-**Tech Stack:** The candidate has an npm workspace and lockfile with Next.js 16.3.6 / React 19.3.0 / TypeScript 5.9.3, ESLint 9.39.5 / `typescript-eslint` 8.55.0, Foundry npm CLI 1.7.1 and ethers 6.17.0. Clean Node 20.18.3/22.23.3 installs, full dependency checks, build, typecheck, lint, 13 shared tests and five contract tests, and zero-finding npm audits passed for the current lockfile. The Go module pins `hiero-sdk-go/v2` 2.84.0, `go-libp2p` 0.50.0, `coder/websocket` 1.8.15, patched gRPC 1.83.2, `x/crypto` 0.56.0, Pion DTLS 3.1.4 and STUN 3.1.5 under Go **1.26.8**. Go 1.26.0 had reachable standard-library vulnerability findings and is below the current safe floor. Hardhat 2.29.1 had 19 npm audit findings and was removed. The browser stream UI is now local testnet only. The unpublished `@neuron-sdk/typescript` is **not** a dependency until installable and verified. See [AGENTS.md](../../../AGENTS.md).
+**Tech Stack:** The candidate has an npm workspace and lockfile with Next.js 16.3.6 / React 19.3.0 / TypeScript 5.9.3, ESLint 9.39.5 / `typescript-eslint` 8.55.0, Foundry npm CLI 1.7.1 and ethers 6.17.0. Public scaffold revision `f6841cf` passed clean Node 20.18.3/22.23.3 installs, full dependency checks, build, typecheck, lint, **24 shared tests and six contract tests**, zero-finding npm audits and read-only production boots. The Go module pins `hiero-sdk-go/v2` 2.84.0, `go-libp2p` 0.50.0, `coder/websocket` 1.8.15, patched gRPC 1.83.2, `x/crypto` 0.56.0, Pion DTLS 3.1.4 and STUN 3.1.5 under Go **1.26.8**. Go 1.26.0 had reachable standard-library vulnerability findings and is below the current safe floor. Hardhat 2.29.1 had 19 npm audit findings and was removed. The browser stream UI remains testnet-only with a loopback app issuing tickets to a remote gateway. The unpublished `@neuron-sdk/typescript` is **not** a dependency until installable and verified. See [AGENTS.md](../../../AGENTS.md).
 
 **Spec:** [Product and release specification](../specs/2026-09-25-neuron-customer-app.md). **Audit:** [Readiness audit](../../../READINESS_AUDIT_2026-09-25.md).
 
@@ -71,7 +71,7 @@ The public template must describe exactly which live data and payment flows pass
 
 **Files:** update audit; create candidate `docs/source-ledger.md` during implementation. **Inputs:** official bounty, CLI, scaffold, Neuron specs/Go SDK/NodeBuilder, Hedera HCS/Mirror/fees/network docs. **Output:** one table with URL, revision/date, observed result, and affected feature. **Checks:** repeat `npm view create-scaffold-hbar version` and `npm view @neuron-sdk/typescript version`; compare upstream heads with pins; inspect actual live seller/registry/topic metadata before use. **Pass:** no unversioned dependency or unsupported deployment/SDK assertion. **Stop:** bounty requirements changed materially or selected spec has no implementable signed session format.
 
-- [ ] Recheck and record exact source revisions, package versions and license before touching the candidate.
+- [x] Recheck and record exact source revisions, package versions and license in [the 26 September ledger](../../source-ledger-2026-09-26.md).
 - [ ] Classify each feature as `documented`, `reference-only`, `live tested`, or `not verified`.
 - [ ] Resolve any changed source by updating spec, audit and this plan before implementation.
 
@@ -89,9 +89,9 @@ The public template must describe exactly which live data and payment flows pass
 
 **Files:** root manifest/scripts/docs plus `packages/nextjs`, `packages/neuron-hedera`, `packages/foundry`; add `packages/gateway` and `packages/legacy-neuron` as their real session path is implemented. **Interface:** each workspace exposes explicit `lint`, `typecheck`, `test`, `build` where applicable; root commands invoke the real workspace scripts. **Checks:** CLI copying with `@latest` and pinned 0.4.0; npm workspace install on Node 20.18.3 and 22.23.3; package-selection behavior; root lint/typecheck/test/build/boot; `/` read-only HTTP 200 without secrets. **Pass:** valid `template.json` and no misleading capability fallback; AGENTS/README work from a fresh directory. **Stop:** success only in original repo, copied manifest missing files, or a baseline dependency error reproduced in the candidate.
 
-- [ ] Create the minimal monorepo, lockfile, scripts, manifest and docs with MIT licensing.
+- [x] Create the minimal monorepo, lockfile, scripts, manifest and docs with MIT licensing.
 - [x] Add separate Next.js and Foundry packages with tested native-HBAR custody/recovery mechanics; signed quote and app checkout remain open.
-- [ ] Run fresh scaffold/install/build/boot on both Node versions; local CLI 0.4.0 template-directory copies passed the full matrix and zero-secret testnet/mainnet boot, while the public GitHub `owner/repo` path still needs publication and verification.
+- [x] Run fresh public `owner/repo` scaffold/install/build/boot on Node 20.18.3 and 22.23.3; revision `f6841cf` passed the full matrix and zero-secret testnet/mainnet read-only boots.
 
 ### Task 2: Explicit network and trust configuration
 
@@ -103,11 +103,11 @@ The public template must describe exactly which live data and payment flows pass
 
 ### Task 3: HCS transaction and Mirror evidence
 
-**Files:** `hcs.ts`, `packages/neuron-go/cmd/hcs-submit`, fixtures/tests, evidence server route/view, fresh-testnet verification script. **Interface:** submit returns a transaction reference only after consensus receipt; read-back returns a verified message record with topic, payer, consensus timestamp, sequence, transaction ID, schema/version and payload hash. **Checks:** 1,024/1,025/2,048-byte fixtures, chunk groups, relative `links.next`, duplicate/missing/out-of-order chunks, malformed base64/JSON, unknown schema, payer mismatch, nonexistent topic, 404/429/5xx, indexing delay and timeout. The testnet integration creates or uses a controlled topic, submits from the candidate, obtains receipt `SUCCESS`, and independently matches Mirror result. A fresh HCS message names local source commit `c71e536`; controlled topic sequence `5` additionally passed draft Neuron signed-envelope verification against its current payer key. A public submission and remaining edge cases are pending. **Pass:** clickable fresh transaction and topic evidence attributable to the submitted commit. **Stop:** treating transaction submission or an empty Mirror page as proof.
+**Files:** `hcs.ts`, `packages/neuron-go/cmd/hcs-submit`, fixtures/tests, evidence server route/view, fresh-testnet verification script. **Interface:** submit returns a transaction reference only after consensus receipt; read-back returns a verified message record with topic, payer, consensus timestamp, sequence, transaction ID, schema/version and payload hash. **Checks:** 1,024/1,025/2,048-byte fixtures, chunk groups, relative `links.next`, duplicate/missing/out-of-order chunks, malformed base64/JSON, unknown schema, payer mismatch, nonexistent topic, 404/429/5xx, indexing delay and timeout. The testnet integration creates or uses a controlled topic, submits from the candidate, obtains receipt `SUCCESS`, and independently matches Mirror result. Public revision `f6841cf` submitted [controlled topic sequence `6`](https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10725147/messages/6) from the scaffold copy; sequence `5` separately passed draft Neuron signed-envelope verification against its current payer key. Some failure-path and multi-page edge cases remain open. **Pass:** clickable fresh transaction and topic evidence attributable to the submitted commit. **Stop:** treating transaction submission or an empty Mirror page as proof.
 
-- [ ] Implement receipt-first HCS submission and bounded Mirror reconciliation.
+- [x] Implement receipt-first HCS submission and bounded Mirror reconciliation.
 - [ ] Verify metadata before messages, reassemble chunks exactly, and reject mismatches.
-- [ ] Produce a fresh candidate testnet transaction and preserve its public evidence URL/decoded hash.
+- [x] Produce a fresh public-template testnet transaction and preserve its public evidence URL/decoded hash.
 
 ### Task 4: Live discovery and identity boundaries
 
@@ -121,9 +121,9 @@ The public template must describe exactly which live data and payment flows pass
 
 **Files:** `session.ts`, `frames.ts`, persistent gateway and legacy QUIC adapter, WSS client and session view. **Interface:** start/stop operations carry an authenticated unique session ID; each received frame remains `Uint8Array` with checked sender, receive time and format; state machine has explicit stale/error/teardown states. Durable storage records owner, nonces and session lifecycle. **Checks:** browser opens WSS backed by a real legacy seller, receives exact bytes, stops, reconnects with a new session, rejects old frames; no-data timeout and control-heartbeat-only scenario show stale; malformed payload and backpressure are bounded; remote TLS/origin and UDP reachability are deployment tests. **Pass:** a working application-level stream carrying actual seller bytes; zero UTF-8 replacement before binary decoding. **Stop:** generated demo frames, a peer listed in heartbeat treated as a healthy stream, or an inbound router rule assumed on this host.
 
-- [ ] Run a live legacy seller and browser through the complete request/connect/data/stop cycle using a reachable UDP route.
+- [x] Run a live legacy seller and browser through the complete request/connect/data/stop cycle using a reachable Mumbai UDP route and WSS gateway.
 - [ ] Test reconnect, stale data, cleanup and bounded buffering with binary fixtures.
-- [ ] Record which proof ran locally and which ran from a remote TLS browser host.
+- [x] Record the local app/browser and remote TLS/WSS gateway proof separately; a hosted public app with customer authentication remains open.
 
 ### Task 6: Customer application and zero-secret experience
 
@@ -137,8 +137,8 @@ The public template must describe exactly which live data and payment flows pass
 
 **Files:** README, AGENTS, testing document, source ledger, release evidence JSON/Markdown. **Checks:** public MIT repo; exact current CLI command from a new directory; full install/lint/typecheck/tests/build/boot; Node 20.18.3 and 22.23.3; route smoke; fresh candidate HCS transaction and Mirror proof; no secrets or irrelevant local artifacts; contracts package retained. Compare template/manifest against [official brief](https://hedera.com/blog/scaffold-hbar-template-bounty/) again before submission. **Pass:** a reviewer can reproduce the demo and inspect the transaction, with E/F status accurately marked. **Stop:** historical audit transaction substituted for candidate transaction, or unresolved baseline build error waived.
 
-- [ ] Run the exact clean-room scaffold and build matrix, recording commands and outputs.
-- [ ] Verify the candidate's new testnet transaction independently and add the evidence link.
+- [x] Run the exact public clean-room scaffold and build matrix, recording commands and results.
+- [x] Verify the public template revision's new testnet transaction independently and add the evidence link.
 - [ ] Reconcile every README claim with the feature/evidence table and the actual submitted commit.
 
 ## Phase 2: legacy seller compatibility and safe commerce
@@ -176,7 +176,7 @@ The public template must describe exactly which live data and payment flows pass
 |---|---|---|
 | Upstream/source audit | **Yes, as of 25 September 2026** | Audit links, pinned heads and historical live evidence; recheck before execution |
 | Reviewable prebuild spec and plan | **Yes** | This spec/plan pair with scope, files, gates and failure conditions |
-| Candidate app and bounty qualification | **No** | Tasks 0–7 and fresh candidate transaction |
+| Candidate app and bounty qualification | **Partial** | Public scaffold and source-linked HCS proof passed; task 2/4/5/6/7 product, identity and documentation checks remain |
 | Public seller app compatibility | **No** | Task 8, including binary-safe browser output and concurrency characterization |
 | Safe live commerce | **No** | Task 9 with signed terms, explicit authorization, execution and recovery |
 | Mainnet support | **No** | Task 10 with its own provisioning, authorization and live evidence |

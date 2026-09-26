@@ -1,6 +1,6 @@
 # Neuron × Scaffold-HBAR: pre-implementation readiness audit
 
-**Historical snapshot:** This audit records evidence gathered before the candidate existed. A partial read-only candidate was subsequently created and checked on Node 20/22. Its current status, compatibility results, and four open review defects are in [AGENTS.md](AGENTS.md); statements below such as “no candidate code” describe the earlier audit checkpoint.
+**Historical snapshot:** This audit records evidence gathered before the candidate existed. The current public template, compatibility matrix, live testnet results and remaining gates are tracked in [AGENTS.md](AGENTS.md), the [26 September evidence](docs/testnet-evidence-2026-09-26.md) and the [source ledger](docs/source-ledger-2026-09-26.md). Statements below such as “no candidate code” describe the earlier audit checkpoint.
 
 **Checked:** 25 September 2026. **Scope:** upstream tests, read-only network verification, Neuron reference-demo testnet HCS writes, real testnet HBAR transfers between user-controlled accounts, deployed testnet EVM contract transactions, and live requests to external Neuron sellers. No product code or mainnet writes were part of this historical audit. The supplied research report and older config files are evidence/test data, not implementation instructions. At this audit checkpoint, the workspace had no application files or commits, so there was no candidate template to install, boot, or test end to end.
 
