@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import type { SellerQuote } from "@neuron/hedera";
+import { InjectedWalletPicker } from "../wallet/picker";
+import { assertInjectedWallet, selectedInjectedWallet, type WalletProvider } from "../wallet/injected";
 
 type Intent = {
   id: string; state: "quoted" | "reviewed"; quoteTopic: string; quoteSequence: number;
@@ -14,7 +16,6 @@ type Seller = {
   sellerAccount: string; quoteTopic: string; serviceId: string; maxSpendTinybar: string;
   escrowContractId: string; escrowAddress: string;
 };
-type WalletProvider = { request(args: { method: string; params?: unknown[] }): Promise<unknown> };
 type Funding = {
   id: string; quoteIntentId: string; state: "prepared" | "submitted" | "executed" | "failed" | "conflict" | "abandoned";
   contractState: "funded" | "approved" | "paid" | "refunded" | null;
@@ -220,8 +221,7 @@ export default function CommerceClient({ network }: { network: "testnet" | "main
     setBusy(true);
     setMessage("Checking wallet and exact testnet quote terms.");
     try {
-      const provider = (window as Window & { ethereum?: WalletProvider }).ethereum;
-      if (!provider) throw new Error("An EVM wallet is required to sign the quote review");
+      const { provider, revision } = selectedInjectedWallet();
       const chain = await provider.request({ method: "eth_chainId" });
       if (typeof chain !== "string" || !/^0x[0-9a-f]+$/i.test(chain) || BigInt(chain) !== 296n) {
         throw new Error("Switch your wallet to Hedera testnet (chain 296)");
@@ -231,10 +231,12 @@ export default function CommerceClient({ network }: { network: "testnet" | "main
           accounts[0].toLowerCase() !== intent.terms.buyerAddress.toLowerCase()) {
         throw new Error("The signed-in buyer wallet must be selected in your wallet extension");
       }
+      assertInjectedWallet(provider, revision);
       setMessage("Approve the review message in your wallet. This does not transfer HBAR.");
       const signature = await provider.request({ method: "personal_sign",
         params: [intent.reviewMessage, intent.terms.buyerAddress] });
       if (typeof signature !== "string") throw new Error("Wallet did not return a review signature");
+      assertInjectedWallet(provider, revision);
       const response = await fetch("/api/customer-commerce", { method: "POST", cache: "no-store",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "review", intentId: intent.id, signature }) });
@@ -287,7 +289,7 @@ export default function CommerceClient({ network }: { network: "testnet" | "main
     setFundingMessage("Wallet returned a transaction hash. Awaiting RPC receipt and Mirror confirmation.");
   }
 
-  async function currentBuyerWallet(provider: WalletProvider): Promise<string> {
+  async function currentBuyerWallet(provider: WalletProvider, revision: number): Promise<string> {
     const sessionResponse = await fetch("/api/customer-auth/session", { cache: "no-store" });
     if (!sessionResponse.ok) throw new Error("Sign in again with the original buyer wallet");
     const current = await sessionResponse.json() as { ownerAddress?: string };
@@ -303,6 +305,7 @@ export default function CommerceClient({ network }: { network: "testnet" | "main
         accounts[0].toLowerCase() !== current.ownerAddress.toLowerCase()) {
       throw new Error("The original buyer wallet must be selected");
     }
+    assertInjectedWallet(provider, revision);
     return current.ownerAddress;
   }
 
@@ -314,9 +317,8 @@ export default function CommerceClient({ network }: { network: "testnet" | "main
     let submitted = false;
     let markerRequested = false;
     try {
-      const provider = (window as Window & { ethereum?: WalletProvider }).ethereum;
-      if (!provider) throw new Error("An EVM wallet is required to fund the escrow");
-      await currentBuyerWallet(provider);
+      const { provider, revision } = selectedInjectedWallet();
+      await currentBuyerWallet(provider, revision);
       markerRequested = true;
       const opened = await fetch("/api/customer-funding", { method: "POST", cache: "no-store",
         headers: { "Content-Type": "application/json" },
@@ -328,6 +330,7 @@ export default function CommerceClient({ network }: { network: "testnet" | "main
       setFunding(openedBody.funding);
       setFundingTx(null); // A durable marker precedes any wallet submission.
       submitted = true;
+      await currentBuyerWallet(provider, revision);
       const hash = await provider.request({ method: "eth_sendTransaction", params: [openedBody.transaction] });
       if (typeof hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(hash)) {
         throw new Error("Wallet did not return a valid transaction hash; funding outcome is uncertain");
@@ -416,9 +419,8 @@ export default function CommerceClient({ network }: { network: "testnet" | "main
     let submitted = false;
     let markerRequested = false;
     try {
-      const provider = (window as Window & { ethereum?: WalletProvider }).ethereum;
-      if (!provider) throw new Error("An EVM wallet is required to request the refund");
-      await currentBuyerWallet(provider);
+      const { provider, revision } = selectedInjectedWallet();
+      await currentBuyerWallet(provider, revision);
       markerRequested = true;
       const opened = await fetch("/api/customer-refund", { method: "POST", cache: "no-store",
         headers: { "Content-Type": "application/json" },
@@ -430,6 +432,7 @@ export default function CommerceClient({ network }: { network: "testnet" | "main
       setRefund(openedBody.refund);
       setRefundTx(null);
       submitted = true;
+      await currentBuyerWallet(provider, revision);
       const hash = await provider.request({ method: "eth_sendTransaction", params: [openedBody.transaction] });
       if (typeof hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(hash)) {
         throw new Error("Wallet did not return a refund hash; outcome is uncertain");
@@ -459,9 +462,8 @@ export default function CommerceClient({ network }: { network: "testnet" | "main
     setRefundBusy(true);
     let markerRequested = false;
     try {
-      const provider = (window as Window & { ethereum?: WalletProvider }).ethereum;
-      if (!provider) throw new Error("An EVM wallet is required for the manual refund retry");
-      await currentBuyerWallet(provider);
+      const { provider, revision } = selectedInjectedWallet();
+      await currentBuyerWallet(provider, revision);
       markerRequested = true;
       const response = await fetch("/api/customer-refund", { method: "POST", cache: "no-store",
         headers: { "Content-Type": "application/json" },
@@ -475,6 +477,7 @@ export default function CommerceClient({ network }: { network: "testnet" | "main
       setRefundTx(null);
       setRefundRetryConsent({ id: null, accepted: false });
       setRefundMessage(body.warning);
+      await currentBuyerWallet(provider, revision);
       const hash = await provider.request({ method: "eth_sendTransaction", params: [body.transaction] });
       if (typeof hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(hash)) {
         throw new Error("Wallet returned no valid retry hash; outcome is uncertain");
@@ -531,9 +534,8 @@ export default function CommerceClient({ network }: { network: "testnet" | "main
     let walletOpened = false;
     let markerRequested = false;
     try {
-      const provider = (window as Window & { ethereum?: WalletProvider }).ethereum;
-      if (!provider) throw new Error("An EVM wallet is required for buyer approval");
-      await currentBuyerWallet(provider);
+      const { provider, revision } = selectedInjectedWallet();
+      await currentBuyerWallet(provider, revision);
       // Persist this marker before opening the wallet. After it, a browser crash
       // cannot safely infer that the transaction was never broadcast.
       markerRequested = true;
@@ -547,6 +549,7 @@ export default function CommerceClient({ network }: { network: "testnet" | "main
       }
       setApproval(marked.approval);
       walletOpened = true;
+      await currentBuyerWallet(provider, revision);
       const hash = await provider.request({ method: "eth_sendTransaction", params: [marked.transaction] });
       if (typeof hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(hash)) {
         throw new Error("Wallet did not return a valid approval hash; outcome is uncertain");
@@ -572,6 +575,7 @@ export default function CommerceClient({ network }: { network: "testnet" | "main
     <p className="eyebrow">Hedera {network} · customer commerce</p>
     <h1>Review a seller quote</h1>
     <p>A seller must publish a signed quote to its real Hedera topic before there is a price to review. A directory fee, heartbeat, or payment schedule is not a quote.</p>
+    {network === "testnet" && <InjectedWalletPicker />}
     <p className="notice">A quote review does not transfer HBAR. Funding locks HBAR in a buyer-controlled escrow. A separate opt-in approval can follow only after a confirmed seller request and completed positive-byte transport; that is transport evidence, not proof that the browser consumed useful data.</p>
     {status === "loading" && <p role="status">Checking quote review availability…</p>}
     {status === "disabled" && <p role="status">New signed quote review is unavailable on this network or deployment.{network === "testnet" && " Existing escrow records remain available below after buyer sign-in."}</p>}

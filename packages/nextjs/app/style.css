@@ -19,7 +19,7 @@ p { max-width: 68ch; line-height: 1.6; }
 .actions { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: 2rem; }
 .button, button { display: inline-block; border: 0; border-radius: .3rem; padding: .8rem 1.1rem; background: #086370; color: white; font: inherit; text-decoration: none; cursor: pointer; }
 .button.secondary, button.secondary { background: #dcebed; color: #164651; }
-:where(a, button, input):focus-visible { outline: 3px solid #b2721f; outline-offset: 3px; }
+:where(a, button, input, select):focus-visible { outline: 3px solid #b2721f; outline-offset: 3px; }
 button:disabled { opacity: .55; cursor: not-allowed; }
 .service-list { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: .75rem; }
 .service-list li { background: white; border: 1px solid #d3dfdf; border-radius: .4rem; }
@@ -32,3 +32,7 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .mono { font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
 .topic-form { display: flex; flex-wrap: wrap; align-items: center; gap: .7rem; margin: 1.5rem 0; }
 .topic-form input { border: 1px solid #9fb4b7; border-radius: .3rem; padding: .7rem; font: inherit; }
+.wallet-picker { display: grid; gap: .5rem; max-width: 30rem; margin: 1rem 0; }
+.wallet-picker label { font-weight: 700; }
+.wallet-picker select { width: 100%; min-width: 0; border: 1px solid #9fb4b7; border-radius: .3rem; padding: .7rem; font: inherit; color: inherit; background: white; }
+.wallet-picker p { margin: 0; font-size: .9rem; }

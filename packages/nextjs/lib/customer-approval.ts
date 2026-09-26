@@ -279,6 +279,28 @@ async function confirmedRequest(session: CustomerSession, origin: URL, purchaseS
       hash !== request.payload_sha256) {
     throw new Error("Seller request HCS bytes, payer or sequence do not match the journal");
   }
+  const transactionId = request.transaction_id;
+  const transactionParts = /^(0\.0\.[1-9]\d*)@(\d+)\.(\d{9})$/.exec(transactionId);
+  if (!transactionParts || transactionParts[1] !== process.env.HEDERA_OPERATOR_ACCOUNT_ID) {
+    throw new Error("Seller request transaction payer is not the configured operator");
+  }
+  const mirrorId = `${transactionParts[1]}-${transactionParts[2]}-${transactionParts[3]}`;
+  const transactionResponse = await fetch(`${network.mirrorBaseUrl}/api/v1/transactions/${mirrorId}`, {
+    redirect: "error", cache: "no-store", signal: AbortSignal.timeout(10_000),
+    headers: { accept: "application/json" },
+  });
+  if (!transactionResponse.ok) throw new Error("Seller request transaction is unavailable on testnet Mirror");
+  const transactionBody = await boundedJson(transactionResponse) as { transactions?: unknown };
+  const matches = Array.isArray(transactionBody?.transactions) ? transactionBody.transactions.filter(item => {
+    if (!item || typeof item !== "object") return false;
+    const row = item as Record<string, unknown>;
+    return row.transaction_id === mirrorId && row.name === "CONSENSUSSUBMITMESSAGE" &&
+      row.result === "SUCCESS" && row.entity_id === topic &&
+      row.consensus_timestamp === message.consensusTimestamp;
+  }) : [];
+  if (matches.length !== 1) {
+    throw new Error("Seller request transaction does not match the exact HCS message");
+  }
   const [seconds, fraction] = message.consensusTimestamp.split(".");
   const consensusMs = Number(seconds) * 1000 + Math.ceil(Number(fraction.padEnd(9, "0")) / 1_000_000);
   if (!Number.isSafeInteger(consensusMs) || consensusMs <= 0) throw new Error("Seller request timestamp is invalid");

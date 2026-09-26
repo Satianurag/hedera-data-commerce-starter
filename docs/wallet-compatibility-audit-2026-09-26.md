@@ -6,7 +6,7 @@ This is a read-only check before using the owner's installed wallet extensions. 
 
 - Chrome showed unlocked HashPack v15.0.1 on **Testnet**, account `0.0.10440893-gpxpy`. [Testnet Mirror](https://testnet.mirrornode.hedera.com/api/v1/accounts/0.0.10440893) reports its public key as `ECDSA_SECP256K1` and EVM address `0x4f52c6ec1f7b12e0f3260dc457ab36345bbfea33`. This is public account metadata, not proof that the app can connect to it.
 - On an ordinary HTTPS page where Chrome granted HashPack full site access, `typeof window.ethereum` evaluated to `undefined`. This is one observed browser state, not a claim about every HashPack version or site.
-- The current customer UI in `packages/nextjs/app/sessions/page.tsx` and `packages/nextjs/app/commerce/review.tsx` discovers only `window.ethereum` and calls `eth_requestAccounts`, `eth_chainId`, `personal_sign`, and `eth_sendTransaction`. It has no WalletConnect/Reown path or explicit EIP-6963 provider selection. Its installed-HashPack login, quote review, and payment paths are therefore **unverified and unavailable in the observed state**. No MetaMask extension behavior was checked.
+- At the time of the browser observation, the customer UI discovered only `window.ethereum`. The later candidate source added explicit EIP-6963 provider discovery and selection, plus a legacy injected-provider fallback. It still has no WalletConnect/Reown path. Whether this HashPack installation announces an EIP-6963 provider on the candidate origin has **not** been observed, so its login, quote review and payment paths remain **unverified**. No MetaMask extension behavior was checked.
 
 ## Current network boundary
 
@@ -16,7 +16,7 @@ This is a read-only check before using the owner's installed wallet extensions. 
 
 ## Up-to-date integration assessment
 
-[HashPack's developer documentation](https://docs.hashpack.app/dapp-developers/walletconnect) documents WalletConnect/Reown and lists Ethereum personal signing and sending as **ECDSA-only**. The [Hedera WalletConnect guide](https://github.com/hashgraph/hedera-wallet-connect#using-reowns-appkit-recommended) recommends Reown AppKit with `WagmiAdapter` for standard EVM `personal_sign` and `eth_sendTransaction` calls. This is the integration direction to investigate; the current app does not implement it.
+[HashPack's developer documentation](https://docs.hashpack.app/dapp-developers/walletconnect) documents WalletConnect/Reown and lists Ethereum personal signing and sending as **ECDSA-only**. The [Hedera WalletConnect guide](https://github.com/hashgraph/hedera-wallet-connect#using-reowns-appkit-recommended) recommends Reown AppKit with `WagmiAdapter` for standard EVM `personal_sign` and `eth_sendTransaction` calls. This is an integration direction to investigate; the current app does not implement WalletConnect.
 
 An isolated dependency trial, outside the candidate lockfile, tried `@reown/appkit@1.8.24`, `@reown/appkit-adapter-wagmi@1.8.24`, Wagmi 2.19.5 and the current Next 16.3.6/React 19.3.0 pair. Strict installation on required Node 20.18.3 failed because transitive `unstorage@1.17.5` selected `chokidar@5`/`readdirp@5`, which need Node 20.19 or newer. An `unstorage@1.17.3` override removed that engine failure but left an `@wagmi/connectors@8.2.0` versus Wagmi core 2.22.1 peer conflict and **23 npm audit findings, including one high**. That particular graph was unsuitable; no packages or lockfile were changed. Do not equate the highest available version with a compatible integration.
 
