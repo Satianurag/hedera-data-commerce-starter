@@ -15,6 +15,7 @@ contract BuyerEscrow {
 
     uint256 public nextId = 1;
     mapping(uint256 => Escrow) public escrows;
+    mapping(bytes32 => bool) public usedTermsHash;
 
     event Funded(uint256 indexed id, address indexed buyer, address indexed seller, uint256 amount, uint64 refundAfter, bytes32 termsHash);
     event Approved(uint256 indexed id, address indexed buyer);
@@ -24,7 +25,9 @@ contract BuyerEscrow {
     function fund(address seller, uint64 refundAfter, bytes32 termsHash) external payable returns (uint256 id) {
         require(seller != address(0) && seller != msg.sender, "invalid seller");
         require(msg.value > 0 && termsHash != bytes32(0), "invalid terms or amount");
+        require(!usedTermsHash[termsHash], "terms already funded");
         require(refundAfter > block.timestamp && refundAfter <= block.timestamp + 30 days, "invalid refund time");
+        usedTermsHash[termsHash] = true;
         id = nextId++;
         escrows[id] = Escrow(msg.sender, seller, msg.value, refundAfter, termsHash, State.Funded);
         emit Funded(id, msg.sender, seller, msg.value, refundAfter, termsHash);
@@ -38,25 +41,23 @@ contract BuyerEscrow {
         emit Approved(id, msg.sender);
     }
 
-    function withdraw(uint256 id, address payable to) external {
+    function withdraw(uint256 id) external {
         Escrow storage escrow = escrows[id];
         require(escrow.state == State.Approved && msg.sender == escrow.seller, "not approved seller");
         require(block.timestamp < escrow.refundAfter, "withdrawal deadline passed");
-        require(to != address(0), "invalid recipient");
         escrow.state = State.Paid;
-        (bool sent,) = to.call{value: escrow.amount}("");
+        (bool sent,) = payable(escrow.seller).call{value: escrow.amount}("");
         require(sent, "release transfer failed");
-        emit Released(id, escrow.seller, to, escrow.amount);
+        emit Released(id, escrow.seller, escrow.seller, escrow.amount);
     }
 
-    function refund(uint256 id, address payable to) external {
+    function refund(uint256 id) external {
         Escrow storage escrow = escrows[id];
         require((escrow.state == State.Funded || escrow.state == State.Approved) && msg.sender == escrow.buyer, "not active buyer");
         require(block.timestamp >= escrow.refundAfter, "refund not due");
-        require(to != address(0), "invalid recipient");
         escrow.state = State.Refunded;
-        (bool sent,) = to.call{value: escrow.amount}("");
+        (bool sent,) = payable(escrow.buyer).call{value: escrow.amount}("");
         require(sent, "refund transfer failed");
-        emit Refunded(id, escrow.buyer, to, escrow.amount);
+        emit Refunded(id, escrow.buyer, escrow.buyer, escrow.amount);
     }
 }

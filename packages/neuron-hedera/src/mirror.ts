@@ -4,6 +4,7 @@ type MirrorAccount = {
   account: string;
   deleted: boolean;
   key: { _type: string; key: string } | null;
+  evm_address?: string | null;
 };
 
 type MirrorTopic = {

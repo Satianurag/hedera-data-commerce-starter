@@ -16,7 +16,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <Link href="/" className="brand">Neuron Customer App</Link>
           <nav aria-label="Main navigation">
             <Link href="/services">Services</Link>
-            <Link href="/sessions">Live testnet stream</Link>
+            <Link href="/sessions">Testnet stream</Link>
             <Link href="/evidence">HCS evidence</Link>
           </nav>
         </header>

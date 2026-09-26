@@ -14,7 +14,6 @@ contract BuyerEscrowTest {
     Vm private constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
     BuyerEscrow private escrow;
     address private constant seller = address(0xA11CE);
-    address private constant recipient = address(0xB0B);
     address private constant stranger = address(0xBAD);
     uint256 private constant amount = 100_000_000;
     bytes32 private constant termsHash = keccak256("signed-terms-test-fixture");
@@ -44,6 +43,13 @@ contract BuyerEscrowTest {
         require(escrow.nextId() == 1, "failed funding advanced id");
     }
 
+    function testTermsHashCannotBeFundedTwice() public {
+        fund();
+        vm.expectRevert();
+        escrow.fund{value: amount}(seller, uint64(block.timestamp + 7200), termsHash);
+        require(escrow.nextId() == 2, "duplicate funding advanced id");
+    }
+
     function testBuyerApprovalAndSellerWithdrawal() public {
         fund();
         require(address(escrow).balance == amount, "funding missing");
@@ -52,51 +58,53 @@ contract BuyerEscrowTest {
         escrow.approve(1);
         vm.prank(seller);
         vm.expectRevert();
-        escrow.withdraw(1, payable(recipient));
+        escrow.withdraw(1);
         escrow.approve(1);
         vm.prank(stranger);
         vm.expectRevert();
-        escrow.withdraw(1, payable(recipient));
+        escrow.withdraw(1);
         vm.prank(seller);
-        escrow.withdraw(1, payable(recipient));
-        require(recipient.balance == amount && address(escrow).balance == 0, "seller payout mismatch");
+        escrow.withdraw(1);
+        require(seller.balance == amount && address(escrow).balance == 0, "seller payout mismatch");
         vm.prank(seller);
         vm.expectRevert();
-        escrow.withdraw(1, payable(recipient));
+        escrow.withdraw(1);
         vm.expectRevert();
-        escrow.refund(1, payable(address(this)));
+        escrow.refund(1);
     }
 
     function testTimeoutRefundAndNoLateRelease() public {
         uint64 due = fund();
+        uint256 buyerAfterFunding = address(this).balance;
         vm.prank(stranger);
         vm.expectRevert();
-        escrow.refund(1, payable(recipient));
+        escrow.refund(1);
         vm.expectRevert();
-        escrow.refund(1, payable(recipient));
+        escrow.refund(1);
         vm.warp(due);
-        escrow.refund(1, payable(recipient));
-        require(recipient.balance == amount && address(escrow).balance == 0, "refund mismatch");
+        escrow.refund(1);
+        require(address(this).balance == buyerAfterFunding + amount && address(escrow).balance == 0, "refund mismatch");
         vm.expectRevert();
         escrow.approve(1);
         vm.expectRevert();
-        escrow.refund(1, payable(recipient));
+        escrow.refund(1);
     }
 
     function testApprovedButUnclaimedEscrowCanBeRefundedAtDeadline() public {
         uint64 due = fund();
+        uint256 buyerAfterFunding = address(this).balance;
         escrow.approve(1);
         vm.expectRevert();
-        escrow.refund(1, payable(recipient));
+        escrow.refund(1);
         vm.warp(due);
         vm.prank(seller);
         vm.expectRevert();
-        escrow.withdraw(1, payable(recipient));
-        escrow.refund(1, payable(recipient));
-        require(recipient.balance == amount && address(escrow).balance == 0, "approved refund missing");
+        escrow.withdraw(1);
+        escrow.refund(1);
+        require(address(this).balance == buyerAfterFunding + amount && address(escrow).balance == 0, "approved refund missing");
         vm.prank(seller);
         vm.expectRevert();
-        escrow.withdraw(1, payable(recipient));
+        escrow.withdraw(1);
     }
 
     function testBuyerCannotApproveAfterDeadline() public {

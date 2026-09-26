@@ -50,11 +50,11 @@ export default function SessionsPage() {
   async function connect() {
     stop();
     const current = generation.current;
-    setStatus("Checking local testnet gateway");
+    setStatus("Checking testnet gateway");
     try {
       const response = await fetch("/api/local-stream-ticket", { method: "POST", cache: "no-store" });
       const body: unknown = await response.json();
-      if (!response.ok || !body || typeof body !== "object") throw new Error("Local testnet gateway is unavailable");
+      if (!response.ok || !body || typeof body !== "object") throw new Error("Testnet gateway is unavailable");
       const ticket = body as Partial<Ticket>;
       if (typeof ticket.url !== "string" || typeof ticket.ticket !== "string" || typeof ticket.sellerAccount !== "string") {
         throw new Error("Gateway ticket was malformed");
@@ -100,9 +100,9 @@ export default function SessionsPage() {
   }
 
   return <section>
-    <p className="eyebrow">Local testnet stream</p>
+    <p className="eyebrow">Testnet stream</p>
     <h1>Watch seller data arrive</h1>
-    <p>This view reads binary bytes from the separately started legacy gateway. The gateway checks the seller&apos;s on-chain key. Valid Mode-S frames are counted only after CRC verification. The legacy stream is not a signed Agent Card or proof of physical sensor origin.</p>
+    <p>This view reads binary bytes from the configured legacy gateway. The gateway checks the seller&apos;s on-chain key. Valid Mode-S frames are counted only after CRC verification. The legacy stream is not a signed Agent Card or proof of physical sensor origin.</p>
     <p className="notice">This test view does not request a service, sign an invoice, pay a seller, or confirm a purchase. Start the testnet gateway and seller request separately before connecting.</p>
     <div className="actions">
       <button type="button" onClick={connect}>Connect</button>

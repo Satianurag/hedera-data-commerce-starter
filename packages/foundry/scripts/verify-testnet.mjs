@@ -130,14 +130,14 @@ async function main() {
   const terms = ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify({ buyer: buyer.address, seller: seller.address, amountTinybar: String(tinybar), refundAfter: deadline, test: "native-hbar-release" })));
   const releaseId = await fund(deadline, terms);
   await submit("approve", buyerContract.approve(releaseId, overrides));
-  await submit("withdraw", sellerContract.withdraw(releaseId, seller.address, overrides));
+  await submit("withdraw", sellerContract.withdraw(releaseId, overrides));
   assert.equal((await buyerContract.escrows(releaseId)).state, 3n);
 
   deadline = (await provider.getBlock("latest")).timestamp + 45;
   const refundTerms = ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify({ buyer: buyer.address, seller: seller.address, amountTinybar: String(tinybar), refundAfter: deadline, test: "native-hbar-refund" })));
   const refundId = await fund(deadline, refundTerms);
   while ((await provider.getBlock("latest")).timestamp < deadline) await new Promise(resolve => setTimeout(resolve, 2_000));
-  await submit("refund", buyerContract.refund(refundId, buyer.address, overrides));
+  await submit("refund", buyerContract.refund(refundId, overrides));
   assert.equal((await buyerContract.escrows(refundId)).state, 4n);
 
   deadline = (await provider.getBlock("latest")).timestamp + 45;
@@ -146,7 +146,7 @@ async function main() {
   await submit("approve", buyerContract.approve(abandonedApprovalId, overrides));
   assert.equal((await buyerContract.escrows(abandonedApprovalId)).state, 2n);
   while ((await provider.getBlock("latest")).timestamp < deadline) await new Promise(resolve => setTimeout(resolve, 2_000));
-  await submit("refund", buyerContract.refund(abandonedApprovalId, buyer.address, overrides));
+  await submit("refund", buyerContract.refund(abandonedApprovalId, overrides));
   assert.equal((await buyerContract.escrows(abandonedApprovalId)).state, 4n);
   assert.equal(await provider.getBalance(address), 0n);
   await journal.close();
