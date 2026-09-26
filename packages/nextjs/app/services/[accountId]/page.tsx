@@ -1,18 +1,29 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { checkLegacyDeviceBinding, getLatestTopicMessage, listLegacyDevices, networkConfigFromEnv } from "@neuron/hedera";
+import ServiceCheckUnavailable from "../unavailable";
 
 export const dynamic = "force-dynamic";
 
 export default async function ServicePage({ params }: { params: Promise<{ accountId: string }> }) {
   const { accountId } = await params;
   const config = networkConfigFromEnv(process.env);
-  const devices = await listLegacyDevices(config);
+  let devices: Awaited<ReturnType<typeof listLegacyDevices>>;
+  try {
+    devices = await listLegacyDevices(config);
+  } catch {
+    return <ServiceCheckUnavailable />;
+  }
   const device = devices.find(row => row.accountId === accountId);
   if (!device) notFound();
 
-  await checkLegacyDeviceBinding(config, device);
-  const latest = await getLatestTopicMessage(config, device.stdoutTopicId);
+  let latest: Awaited<ReturnType<typeof getLatestTopicMessage>>;
+  try {
+    await checkLegacyDeviceBinding(config, device);
+    latest = await getLatestTopicMessage(config, device.stdoutTopicId);
+  } catch {
+    return <ServiceCheckUnavailable />;
+  }
   const sellerPaidLatest = latest?.payerAccountId === device.accountId;
   let messageType: string | undefined;
   let protocolVersion: string | undefined;

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { listLegacyDevices, networkConfigFromEnv } from "@neuron/hedera";
+import ServiceCheckUnavailable from "./unavailable";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +15,12 @@ export default async function ServicesPage() {
       </section>
     );
   }
-  const devices = await listLegacyDevices(config);
+  let devices: Awaited<ReturnType<typeof listLegacyDevices>>;
+  try {
+    devices = await listLegacyDevices(config);
+  } catch {
+    return <ServiceCheckUnavailable />;
+  }
   return (
     <section>
       <p className="eyebrow">Hedera {config.network} · Legacy directory</p>
