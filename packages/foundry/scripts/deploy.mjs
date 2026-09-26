@@ -1,12 +1,31 @@
 import assert from "node:assert/strict";
 import { createHash, createPrivateKey } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
+import { isIP } from "node:net";
+import { dirname, isAbsolute } from "node:path";
 import { ethers } from "ethers";
 
 const networks = {
   testnet: { chainId: 296n, mirror: "https://testnet.mirrornode.hedera.com", rpc: "https://testnet.hashio.io/api" },
-  mainnet: { chainId: 295n, mirror: "https://mainnet.mirrornode.hedera.com", rpc: "https://mainnet.hashio.io/api" },
+  mainnet: { chainId: 295n, mirror: "https://mainnet.mirrornode.hedera.com" },
 };
+
+function rpcUrl(name, network) {
+  const configured = process.env.HEDERA_RPC_URL;
+  if (!configured && name === "mainnet") {
+    throw new Error("mainnet deployment requires an explicit production HEDERA_RPC_URL");
+  }
+  const value = configured ?? network.rpc;
+  let url;
+  try { url = new URL(value); } catch { throw new Error("HEDERA_RPC_URL is invalid"); }
+  if (url.protocol !== "https:" || !url.hostname || url.username || url.password || url.hash || url.search ||
+      url.hostname === "localhost" || url.hostname.endsWith(".local") ||
+      isIP(url.hostname.replace(/^\[|\]$/g, "")) !== 0 ||
+      (name === "mainnet" && url.hostname === "mainnet.hashio.io")) {
+    throw new Error("HEDERA_RPC_URL must be a public HTTPS provider for the selected network");
+  }
+  return url.href;
+}
 
 function positiveEnv(name) {
   const value = process.env[name];
@@ -33,9 +52,13 @@ async function main() {
   const gasLimit = positiveEnv("HEDERA_CONTRACT_GAS");
   if (gasLimit > 2_000_000n) throw new Error("HEDERA_CONTRACT_GAS exceeds 2000000");
   const keyPath = process.env.HEDERA_OPERATOR_KEY_FILE;
-  if (!keyPath) throw new Error("HEDERA_OPERATOR_KEY_FILE is required");
-  const keyInfo = await stat(keyPath);
-  if (!keyInfo.isFile() || (keyInfo.mode & 0o077) !== 0) throw new Error("operator key file must be owner-only");
+  if (!keyPath || !isAbsolute(keyPath)) throw new Error("HEDERA_OPERATOR_KEY_FILE requires an absolute path");
+  const [keyInfo, parent] = await Promise.all([lstat(keyPath), lstat(dirname(keyPath))]);
+  if (!keyInfo.isFile() || keyInfo.isSymbolicLink() || (keyInfo.mode & 0o077) !== 0 ||
+      !parent.isDirectory() || parent.isSymbolicLink() || (parent.mode & 0o077) !== 0 ||
+      (process.getuid && (keyInfo.uid !== process.getuid() || parent.uid !== process.getuid()))) {
+    throw new Error("operator key and parent directory must be owner-only");
+  }
   const der = Buffer.from((await readFile(keyPath, "utf8")).trim(), "hex");
   let keyObject;
   for (const type of ["pkcs8", "sec1"]) {
@@ -54,7 +77,7 @@ async function main() {
     throw new Error("operator key/account/EVM address mismatch on selected network");
   }
 
-  const provider = new ethers.JsonRpcProvider(network.rpc);
+  const provider = new ethers.JsonRpcProvider(rpcUrl(name, network));
   if ((await provider.getNetwork()).chainId !== network.chainId) throw new Error("RPC chain ID mismatch");
   const artifact = JSON.parse(await readFile(new URL("../out/BuyerEscrow.sol/BuyerEscrow.json", import.meta.url), "utf8"));
   const bytecode = artifact.bytecode?.object;

@@ -98,7 +98,10 @@ async function main() {
   }
 
   async function fund(deadline, terms) {
-    const receipt = await submit("fund", buyerContract.fund(seller.address, deadline, terms, { ...overrides, value }));
+    const latest = (await provider.getBlock("latest")).timestamp;
+    if (deadline - latest < 150) throw new Error("test quote has insufficient funding window");
+    const quoteExpiresAt = BigInt(Math.min(latest + 300, deadline - 30));
+    const receipt = await submit("fund", buyerContract.fund(seller.address, quoteExpiresAt, deadline, terms, { ...overrides, value }));
     const funded = receipt.logs.flatMap(log => {
       if (log.address.toLowerCase() !== address.toLowerCase()) return [];
       try {
@@ -111,6 +114,7 @@ async function main() {
     assert.equal(event.buyer.toLowerCase(), buyer.address.toLowerCase());
     assert.equal(event.seller.toLowerCase(), seller.address.toLowerCase());
     assert.equal(event.amount, tinybar);
+    assert.equal(event.quoteExpiresAt, quoteExpiresAt);
     assert.equal(event.refundAfter, BigInt(deadline));
     assert.equal(event.termsHash.toLowerCase(), terms.toLowerCase());
     const id = event.id;
@@ -120,32 +124,32 @@ async function main() {
     assert.equal(escrow.buyer.toLowerCase(), buyer.address.toLowerCase());
     assert.equal(escrow.seller.toLowerCase(), seller.address.toLowerCase());
     assert.equal(escrow.amount, tinybar, "Hedera EVM tinybar conversion mismatch");
+    assert.equal(escrow.quoteExpiresAt, quoteExpiresAt);
     assert.equal(escrow.refundAfter, BigInt(deadline));
     assert.equal(escrow.termsHash.toLowerCase(), terms.toLowerCase());
     assert.equal(escrow.state, 1n);
     return id;
   }
 
-  let deadline = (await provider.getBlock("latest")).timestamp + 90;
+  let deadline = (await provider.getBlock("latest")).timestamp + 360;
   const terms = ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify({ buyer: buyer.address, seller: seller.address, amountTinybar: String(tinybar), refundAfter: deadline, test: "native-hbar-release" })));
   const releaseId = await fund(deadline, terms);
   await submit("approve", buyerContract.approve(releaseId, overrides));
   await submit("withdraw", sellerContract.withdraw(releaseId, overrides));
   assert.equal((await buyerContract.escrows(releaseId)).state, 3n);
 
-  deadline = (await provider.getBlock("latest")).timestamp + 45;
+  deadline = (await provider.getBlock("latest")).timestamp + 360;
   const refundTerms = ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify({ buyer: buyer.address, seller: seller.address, amountTinybar: String(tinybar), refundAfter: deadline, test: "native-hbar-refund" })));
   const refundId = await fund(deadline, refundTerms);
-  while ((await provider.getBlock("latest")).timestamp < deadline) await new Promise(resolve => setTimeout(resolve, 2_000));
-  await submit("refund", buyerContract.refund(refundId, overrides));
-  assert.equal((await buyerContract.escrows(refundId)).state, 4n);
 
-  deadline = (await provider.getBlock("latest")).timestamp + 45;
+  deadline = (await provider.getBlock("latest")).timestamp + 360;
   const abandonedTerms = ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify({ buyer: buyer.address, seller: seller.address, amountTinybar: String(tinybar), refundAfter: deadline, test: "approved-but-unclaimed-refund" })));
   const abandonedApprovalId = await fund(deadline, abandonedTerms);
   await submit("approve", buyerContract.approve(abandonedApprovalId, overrides));
   assert.equal((await buyerContract.escrows(abandonedApprovalId)).state, 2n);
   while ((await provider.getBlock("latest")).timestamp < deadline) await new Promise(resolve => setTimeout(resolve, 2_000));
+  await submit("refund", buyerContract.refund(refundId, overrides));
+  assert.equal((await buyerContract.escrows(refundId)).state, 4n);
   await submit("refund", buyerContract.refund(abandonedApprovalId, overrides));
   assert.equal((await buyerContract.escrows(abandonedApprovalId)).state, 4n);
   assert.equal(await provider.getBalance(address), 0n);

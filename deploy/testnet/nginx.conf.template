@@ -1,0 +1,62 @@
+# Render __PUBLIC_HOST__, __TLS_FULLCHAIN__ and __TLS_PRIVATE_KEY__ for one
+# controlled testnet host. The Go gateway listens only on 127.0.0.1:9080;
+# Next.js listens only on 127.0.0.1:3000. UDP 4001 is exposed separately.
+limit_req_zone $binary_remote_addr zone=neuron_challenge:10m rate=2r/m;
+
+server {
+    listen 80;
+    server_name __PUBLIC_HOST__;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/letsencrypt;
+    }
+    location / {
+        return 308 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name __PUBLIC_HOST__;
+    ssl_certificate __TLS_FULLCHAIN__;
+    ssl_certificate_key __TLS_PRIVATE_KEY__;
+    client_max_body_size 1m;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy same-origin always;
+
+    # These endpoints are used by the colocated Next server through the
+    # loopback gateway address, not by browsers on the public internet.
+    location = /health { return 404; }
+    location = /session-check { return 404; }
+    location = /transport-evidence { return 404; }
+
+    location = /stream {
+        proxy_pass http://127.0.0.1:9080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Origin $http_origin;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 120s;
+        proxy_send_timeout 10s;
+        proxy_buffering off;
+    }
+
+    location = /api/customer-auth/challenge {
+        limit_req zone=neuron_challenge burst=3 nodelay;
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 60s;
+    }
+}

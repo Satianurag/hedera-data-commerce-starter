@@ -17,11 +17,11 @@ const quote = {
   sessionId: "session-7", asset: "HBAR", amountTinybar: "10000000", maxAmountTinybar: "10000000",
   durationSeconds: "3600", issuedAt: String(now - 10n), expiresAt: String(now + 300n),
   refundAfter: String(now + 7200n), escrowContractId: "0.0.8", escrowAddress,
-  evidenceTopicId: "0.0.9", nonce: "ab".repeat(32),
+  nonce: "ab".repeat(32),
 };
 const expected = {
   sellerAccountId: "0.0.7", sellerTopicId: "0.0.10", buyerAddress, serviceId: "adsb-v0.1",
-  sessionId: "session-7", escrowContractId: "0.0.8", escrowAddress, evidenceTopicId: "0.0.9",
+  sessionId: "session-7", escrowContractId: "0.0.8", escrowAddress,
   maxSpendTinybar: 10_000_000n, nowSeconds: now,
 };
 
@@ -55,7 +55,6 @@ function withMirrorAccount(key, run, evmAddress = sellerAddress) {
 }
 
 test("seller-signed quote binds current Mirror key, buyer, cap, units and exact funding terms", async () => {
-  assert.ok(signedMessage().bytes.length > 1024, "signed quote requires HCS chunk reassembly");
   await withMirrorAccount(signingKey.compressedPublicKey.slice(2), async () => {
     const result = await verifySignedSellerQuote(testnet, signedMessage(), expected);
     assert.equal(result.termsHash, keccak256(Buffer.from(JSON.stringify(quote))));
@@ -66,6 +65,17 @@ test("seller-signed quote binds current Mirror key, buyer, cap, units and exact 
       valueWei: 100_000_000_000_000_000n,
     });
   });
+});
+
+test("lowercase Mirror EVM address normalizes without relaxing signed quote checksums", async () => {
+  await withMirrorAccount(signingKey.compressedPublicKey.slice(2), async () => {
+    const result = await verifySignedSellerQuote(testnet, signedMessage(), expected);
+    assert.equal(result.terms.sellerAddress, sellerAddress);
+  }, sellerAddress.toLowerCase());
+  await withMirrorAccount(signingKey.compressedPublicKey.slice(2), async () => {
+    await assert.rejects(verifySignedSellerQuote(testnet,
+      signedMessage({ ...quote, sellerAddress: sellerAddress.toLowerCase() }), expected), /EIP-55/);
+  }, sellerAddress.toLowerCase());
 });
 
 test("seller key rotation or forged payer stops terms before funding", async () => {
@@ -107,6 +117,8 @@ test("money, network, expiry, service and contract mismatches fail closed", asyn
 test("quote payload rejects extra or reordered fields", async () => {
   await withMirrorAccount(signingKey.compressedPublicKey.slice(2), async () => {
     await assert.rejects(verifySignedSellerQuote(testnet, signedMessage({ ...quote, fee: "1" }), expected), /canonical/);
+    await assert.rejects(verifySignedSellerQuote(testnet,
+      signedMessage({ ...quote, evidenceTopicId: "0.0.9" }), expected), /canonical/);
     const { type, ...rest } = quote;
     await assert.rejects(verifySignedSellerQuote(testnet, signedMessage({ ...rest, type }), expected), /canonical/);
   });

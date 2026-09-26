@@ -17,6 +17,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <nav aria-label="Main navigation">
             <Link href="/services">Services</Link>
             <Link href="/sessions">Testnet stream</Link>
+            <Link href="/commerce">Quote review</Link>
             <Link href="/evidence">HCS evidence</Link>
           </nav>
         </header>

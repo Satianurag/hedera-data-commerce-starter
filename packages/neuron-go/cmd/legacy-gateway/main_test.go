@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -17,16 +18,95 @@ import (
 	"github.com/coder/websocket"
 )
 
-func TestFullBrowserQueueStopsSellerStream(t *testing.T) {
+type fixedSellerStream struct{ since time.Time }
+
+func (s *fixedSellerStream) ActiveSince() time.Time { return s.since }
+
+func TestHealthSeparatesBrowserSellerConnectionAndFreshBytes(t *testing.T) {
+	now := time.Now()
+	stream := &fixedSellerStream{}
+	g := &gateway{sellerAccount: "0.0.4318411", stream: stream,
+		subscriber: &subscriber{frames: make(chan []byte, 1)}}
+	read := func() map[string]any {
+		t.Helper()
+		w := httptest.NewRecorder()
+		g.serveHealth(w, httptest.NewRequest(http.MethodGet, "/health", nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("health returned HTTP %d", w.Code)
+		}
+		var data map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &data); err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+	state := read()
+	if state["browserConnected"] != true || state["sellerStreamConnected"] != false || state["sellerDataFresh"] != false {
+		t.Fatalf("browser alone was treated as seller delivery: %+v", state)
+	}
+	stream.since = now.Add(-2 * time.Second)
+	state = read()
+	if state["sellerStreamConnected"] != true || state["sellerDataFresh"] != false {
+		t.Fatalf("open seller stream without bytes was treated as delivery: %+v", state)
+	}
+	g.lastDataAt = now.Add(-time.Second)
+	state = read()
+	if state["sellerDataFresh"] != true {
+		t.Fatalf("recent bytes on current seller stream were not fresh: %+v", state)
+	}
+	stream.since = now
+	state = read()
+	if state["sellerStreamConnected"] != true || state["sellerDataFresh"] != false {
+		t.Fatalf("new stream inherited previous seller bytes: %+v", state)
+	}
+	stream.since = now.Add(-30 * time.Second)
+	g.lastDataAt = now.Add(-20 * time.Second)
+	state = read()
+	if state["sellerDataFresh"] != false {
+		t.Fatalf("stale seller bytes were reported fresh: %+v", state)
+	}
+	stream.since = time.Time{}
+	state = read()
+	if state["sellerStreamConnected"] != false || state["sellerDataFresh"] != false || state["sellerStreamSince"] != nil {
+		t.Fatalf("closed seller stream was reported active: %+v", state)
+	}
+}
+
+func TestFullBrowserQueueDisconnectsSubscriberWithoutStoppingSeller(t *testing.T) {
 	sub := &subscriber{frames: make(chan []byte), failure: make(chan struct{}, 1)}
 	g := &gateway{subscriber: sub}
-	if err := g.onBytes([]byte{0xff, 0x00}); err == nil {
-		t.Fatal("unbounded browser backpressure was accepted")
+	if err := g.onBytes([]byte{0xff, 0x00}); err != nil {
+		t.Fatalf("browser backpressure stopped seller stream: %v", err)
+	}
+	if !sub.failed {
+		t.Fatal("slow browser was not marked failed")
 	}
 	select {
 	case <-sub.failure:
 	default:
 		t.Fatal("browser was not notified of stream backpressure")
+	}
+	if err := g.onBytes([]byte{0x8d}); err != nil || g.bytes != 3 || g.chunks != 2 {
+		t.Fatalf("seller ingress stopped after browser failure: err=%v bytes=%d chunks=%d", err, g.bytes, g.chunks)
+	}
+}
+
+func TestBrowserQueueCopiesBytesAndBoundsChunks(t *testing.T) {
+	sub := &subscriber{frames: make(chan []byte, 1), failure: make(chan struct{}, 1)}
+	g := &gateway{subscriber: sub}
+	chunk := []byte{0x8d, 0xff}
+	if err := g.onBytes(chunk); err != nil {
+		t.Fatal(err)
+	}
+	chunk[0] = 0x00
+	if got := <-sub.frames; got[0] != 0x8d {
+		t.Fatalf("queued seller bytes mutated: %x", got)
+	}
+	if err := g.onBytes(make([]byte, 32*1024+1)); err == nil {
+		t.Fatal("oversized chunk was accepted")
+	}
+	if g.bytes != 2 || g.chunks != 1 {
+		t.Fatal("rejected chunk changed ingress counters")
 	}
 }
 

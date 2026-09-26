@@ -21,7 +21,9 @@ import (
 	hedera "github.com/hiero-ledger/hiero-sdk-go/v2/sdk"
 )
 
-const maxMessageBytes = 1024
+const chunkSize = 1024
+const maxChunks = 8
+const maxMessageBytes = chunkSize * maxChunks
 
 var hederaID = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
 
@@ -30,6 +32,13 @@ type config struct {
 	key                             hedera.PrivateKey
 	maxFee                          hedera.Hbar
 	openTopic                       bool
+}
+
+func chunkCount(size int) (int, error) {
+	if size < 1 || size > maxMessageBytes {
+		return 0, fmt.Errorf("stdin must contain 1 to %d message bytes", maxMessageBytes)
+	}
+	return (size + chunkSize - 1) / chunkSize, nil
 }
 
 func fromEnv() (config, error) {
@@ -157,13 +166,61 @@ type mirrorMessage struct {
 	} `json:"chunk_info"`
 }
 
+func matchMirrorRows(c config, transactionID hedera.TransactionID, payload []byte, rows []mirrorMessage) (mirrorMessage, bool, bool, error) {
+	if transactionID.AccountID == nil || transactionID.ValidStart == nil || transactionID.AccountID.String() != c.account {
+		return mirrorMessage{}, false, false, errors.New("transaction ID does not match the configured operator")
+	}
+	count, err := chunkCount(len(payload))
+	if err != nil {
+		return mirrorMessage{}, false, false, err
+	}
+	validStart := fmt.Sprintf("%d.%09d", transactionID.ValidStart.Unix(), transactionID.ValidStart.Nanosecond())
+	chunks := make(map[int]mirrorMessage, count)
+	for _, row := range rows {
+		info := row.ChunkInfo
+		if info == nil || info.InitialTransactionID.AccountID != c.account ||
+			info.InitialTransactionID.TransactionValidStart != validStart ||
+			info.InitialTransactionID.Nonce != 0 || info.InitialTransactionID.Scheduled {
+			continue
+		}
+		if info.Total != count || info.Number < 1 || info.Number > count ||
+			row.TopicID != c.topic || row.PayerAccountID != c.account ||
+			row.SequenceNumber < 1 || row.ConsensusTime == "" {
+			return mirrorMessage{}, false, true, errors.New("Mirror indexed the transaction with mismatched chunk evidence")
+		}
+		if _, duplicate := chunks[info.Number]; duplicate {
+			return mirrorMessage{}, false, true, errors.New("Mirror returned a duplicate selected chunk")
+		}
+		decoded, decodeErr := base64.StdEncoding.Strict().DecodeString(row.Message)
+		start := (info.Number - 1) * chunkSize
+		end := start + chunkSize
+		if end > len(payload) {
+			end = len(payload)
+		}
+		if decodeErr != nil || !bytes.Equal(decoded, payload[start:end]) {
+			return mirrorMessage{}, false, true, errors.New("Mirror indexed the transaction with mismatched message bytes")
+		}
+		chunks[info.Number] = row
+	}
+	if len(chunks) < count {
+		return mirrorMessage{}, false, len(chunks) > 0, nil
+	}
+	for number := 2; number <= count; number++ {
+		if chunks[number].SequenceNumber <= chunks[number-1].SequenceNumber {
+			return mirrorMessage{}, false, true, errors.New("Mirror chunk sequence is out of order")
+		}
+	}
+	return chunks[count], true, true, nil
+}
+
 func findMirrorMessage(ctx context.Context, c config, transactionID hedera.TransactionID, payload []byte) (mirrorMessage, error) {
 	if transactionID.AccountID == nil || transactionID.ValidStart == nil || transactionID.AccountID.String() != c.account {
 		return mirrorMessage{}, errors.New("transaction ID does not match the configured operator")
 	}
-	validStart := fmt.Sprintf("%d.%09d", transactionID.ValidStart.Unix(), transactionID.ValidStart.Nanosecond())
+	partialSeen := false
 	for {
 		pageURL := c.mirror + "/api/v1/topics/" + c.topic + "/messages?limit=25&order=desc"
+		rows := make([]mirrorMessage, 0, 125)
 		for pageNumber := 0; pageNumber < 5; pageNumber++ {
 			var page struct {
 				Messages []mirrorMessage `json:"messages"`
@@ -174,20 +231,17 @@ func findMirrorMessage(ctx context.Context, c config, transactionID hedera.Trans
 			if err := getJSON(ctx, pageURL, &page); err != nil {
 				break
 			}
-			for _, row := range page.Messages {
-				info := row.ChunkInfo
-				if info == nil || info.InitialTransactionID.AccountID != c.account ||
-					info.InitialTransactionID.TransactionValidStart != validStart ||
-					info.InitialTransactionID.Nonce != 0 || info.InitialTransactionID.Scheduled ||
-					info.Number != 1 || info.Total != 1 {
-					continue
-				}
-				decoded, decodeErr := base64.StdEncoding.Strict().DecodeString(row.Message)
-				if decodeErr != nil || row.TopicID != c.topic || row.PayerAccountID != c.account ||
-					row.SequenceNumber < 1 || row.ConsensusTime == "" || !bytes.Equal(decoded, payload) {
-					return mirrorMessage{}, errors.New("Mirror indexed the transaction with mismatched evidence")
-				}
-				return row, nil
+			if len(page.Messages) > 25 {
+				return mirrorMessage{}, errors.New("Mirror returned an oversized message page")
+			}
+			rows = append(rows, page.Messages...)
+			matched, complete, partial, matchErr := matchMirrorRows(c, transactionID, payload, rows)
+			if matchErr != nil {
+				return mirrorMessage{}, matchErr
+			}
+			partialSeen = partialSeen || partial
+			if complete {
+				return matched, nil
 			}
 			if page.Links.Next == "" {
 				break
@@ -204,10 +258,16 @@ func findMirrorMessage(ctx context.Context, c config, transactionID hedera.Trans
 			pageURL = resolved.String()
 		}
 		if ctx.Err() != nil {
+			if partialSeen {
+				return mirrorMessage{}, errors.New("Mirror confirmation timed out with partial chunks; reconcile every chunk before any retry")
+			}
 			return mirrorMessage{}, errors.New("Mirror confirmation timed out; retain the consensus transaction ID for reconciliation")
 		}
 		select {
 		case <-ctx.Done():
+			if partialSeen {
+				return mirrorMessage{}, errors.New("Mirror confirmation timed out with partial chunks; reconcile every chunk before any retry")
+			}
 			return mirrorMessage{}, errors.New("Mirror confirmation timed out; retain the consensus transaction ID for reconciliation")
 		case <-time.After(2 * time.Second):
 		}
@@ -220,8 +280,16 @@ func run() error {
 		return err
 	}
 	payload, err := io.ReadAll(io.LimitReader(os.Stdin, maxMessageBytes+1))
-	if err != nil || len(payload) == 0 || len(payload) > maxMessageBytes {
-		return errors.New("stdin must contain 1 to 1024 message bytes")
+	if err != nil {
+		return fmt.Errorf("cannot read stdin: %w", err)
+	}
+	count, err := chunkCount(len(payload))
+	if err != nil {
+		return err
+	}
+	perChunkFee := c.maxFee.AsTinybar() / int64(count)
+	if perChunkFee < 1 {
+		return errors.New("HEDERA_MAX_FEE_TINYBAR is too small for the number of chunks")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -240,30 +308,35 @@ func run() error {
 	client.SetOperator(accountID, c.key)
 	transactionID := hedera.TransactionIDGenerate(accountID)
 	digest := sha256.Sum256(payload)
-	fmt.Fprintf(os.Stderr, "submitting HCS transaction %s, SHA-256 %x; reconcile this ID before any retry if the outcome is uncertain\n", transactionID, digest)
-	response, err := hedera.NewTopicMessageSubmitTransaction().
+	// Dividing the configured amount gives a nominal sum of per-chunk fee
+	// ceilings for one attempt per chunk. The SDK may retry a known throttled
+	// transaction internally, so this is not a hard aggregate spend cap.
+	fmt.Fprintf(os.Stderr, "submitting HCS transaction %s, %d chunk(s), SHA-256 %x; nominal sum of per-chunk fee ceilings %d tinybar (%d each); reconcile this ID and every chunk before any retry if the outcome is uncertain\n", transactionID, count, digest, perChunkFee*int64(count), perChunkFee)
+	responses, err := hedera.NewTopicMessageSubmitTransaction().
 		SetTopicID(topicID).
 		SetMessage(payload).
-		SetMaxTransactionFee(c.maxFee).
+		SetChunkSize(chunkSize).
+		SetMaxChunks(maxChunks).
+		SetMaxTransactionFee(hedera.HbarFromTinybar(perChunkFee)).
 		SetTransactionID(transactionID).
-		Execute(client)
+		ExecuteAll(client)
 	receiptStatus := "UNKNOWN"
 	executeErr := err
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "submission returned an error for %s; checking Mirror before reporting the outcome: %v\n", transactionID, err)
-	} else {
-		if response.TransactionID.String() != transactionID.String() {
-			return fmt.Errorf("HCS response transaction ID changed from %s to %s", transactionID, response.TransactionID)
+	for number, response := range responses {
+		if response.TransactionID.AccountID != nil && response.TransactionID.ValidStart != nil {
+			fmt.Fprintf(os.Stderr, "HCS chunk %d transaction response: %s\n", number+1, response.TransactionID)
 		}
-		receipt, receiptErr := response.GetReceipt(client)
-		if receiptErr != nil {
-			executeErr = receiptErr
-			fmt.Fprintf(os.Stderr, "receipt unavailable for %s; checking Mirror before reporting the outcome: %v\n", transactionID, receiptErr)
-		} else if receipt.Status != hedera.StatusSuccess {
-			return fmt.Errorf("HCS receipt for %s: status %s", transactionID, receipt.Status)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "chunk submission returned an error for %s; checking Mirror before reporting the outcome: %v\n", transactionID, err)
+	} else {
+		if len(responses) != count || responses[0].TransactionID.String() != transactionID.String() {
+			executeErr = errors.New("SDK returned a different initial transaction ID or chunk count")
+			fmt.Fprintf(os.Stderr, "chunk response identity changed for %s; checking Mirror before reporting the outcome\n", transactionID)
 		} else {
+			// ExecuteAll checks each chunk's receipt before returning success.
 			receiptStatus = "SUCCESS"
-			fmt.Fprintf(os.Stderr, "consensus SUCCESS for %s; awaiting Mirror confirmation\n", transactionID)
+			fmt.Fprintf(os.Stderr, "consensus SUCCESS for %s across %d chunk(s); awaiting Mirror confirmation\n", transactionID, count)
 		}
 	}
 	confirmCtx, confirmCancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -284,7 +357,8 @@ func run() error {
 		ConsensusTimestamp string `json:"consensusTimestamp"`
 		SHA256             string `json:"sha256"`
 		SequenceNumber     int64  `json:"sequenceNumber"`
-	}{c.network, c.topic, c.account, transactionID.String(), receiptStatus, message.ConsensusTime, hex.EncodeToString(digest[:]), message.SequenceNumber})
+		ChunkCount         int    `json:"chunkCount"`
+	}{c.network, c.topic, c.account, transactionID.String(), receiptStatus, message.ConsensusTime, hex.EncodeToString(digest[:]), message.SequenceNumber, count})
 }
 
 func main() {

@@ -8,6 +8,7 @@ contract BuyerEscrow {
         address buyer;
         address seller;
         uint256 amount;
+        uint64 quoteExpiresAt;
         uint64 refundAfter;
         bytes32 termsHash;
         State state;
@@ -15,22 +16,23 @@ contract BuyerEscrow {
 
     uint256 public nextId = 1;
     mapping(uint256 => Escrow) public escrows;
-    mapping(bytes32 => bool) public usedTermsHash;
+    mapping(address => mapping(bytes32 => bool)) public usedTermsHash;
 
-    event Funded(uint256 indexed id, address indexed buyer, address indexed seller, uint256 amount, uint64 refundAfter, bytes32 termsHash);
+    event Funded(uint256 indexed id, address indexed buyer, address seller, uint256 amount, uint64 quoteExpiresAt, uint64 refundAfter, bytes32 indexed termsHash);
     event Approved(uint256 indexed id, address indexed buyer);
     event Released(uint256 indexed id, address indexed seller, address to, uint256 amount);
     event Refunded(uint256 indexed id, address indexed buyer, address to, uint256 amount);
 
-    function fund(address seller, uint64 refundAfter, bytes32 termsHash) external payable returns (uint256 id) {
+    function fund(address seller, uint64 quoteExpiresAt, uint64 refundAfter, bytes32 termsHash) external payable returns (uint256 id) {
         require(seller != address(0) && seller != msg.sender, "invalid seller");
         require(msg.value > 0 && termsHash != bytes32(0), "invalid terms or amount");
-        require(!usedTermsHash[termsHash], "terms already funded");
+        require(!usedTermsHash[msg.sender][termsHash], "terms already funded by buyer");
+        require(quoteExpiresAt >= block.timestamp && quoteExpiresAt < refundAfter, "quote expired or invalid");
         require(refundAfter > block.timestamp && refundAfter <= block.timestamp + 30 days, "invalid refund time");
-        usedTermsHash[termsHash] = true;
+        usedTermsHash[msg.sender][termsHash] = true;
         id = nextId++;
-        escrows[id] = Escrow(msg.sender, seller, msg.value, refundAfter, termsHash, State.Funded);
-        emit Funded(id, msg.sender, seller, msg.value, refundAfter, termsHash);
+        escrows[id] = Escrow(msg.sender, seller, msg.value, quoteExpiresAt, refundAfter, termsHash, State.Funded);
+        emit Funded(id, msg.sender, seller, msg.value, quoteExpiresAt, refundAfter, termsHash);
     }
 
     function approve(uint256 id) external {

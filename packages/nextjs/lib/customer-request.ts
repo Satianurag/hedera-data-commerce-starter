@@ -4,6 +4,7 @@ import { lstatSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute } from "node:path";
 import { checkLegacyDeviceBinding, listLegacyDevices, networkConfigFromEnv } from "@neuron/hedera";
 import { getCustomerSession, withCustomerDatabase, type CustomerSession } from "./customer-auth";
+import { gatewayServerEndpoint } from "./gateway-endpoint";
 
 const hederaId = /^0\.0\.[1-9]\d*$/;
 const transactionIdPattern = /^0\.0\.[1-9]\d*@\d+\.\d{9}$/;
@@ -42,10 +43,14 @@ function ownerExecutable(value: string | undefined, label: string): string {
 }
 
 export function customerRequestEnabled(origin: URL | null): boolean {
+  const localPilot = origin?.protocol === "http:" && ["localhost", "127.0.0.1"].includes(origin.hostname);
+  const publicPilot = origin?.protocol === "https:" &&
+    process.env.NEURON_ENABLE_PUBLIC_CUSTOMER_REQUEST === "true" &&
+    process.env.NEURON_ENABLE_REMOTE_STREAM === "true";
   return process.env.NEURON_ENABLE_CUSTOMER_REQUEST === "true" &&
     process.env.NEURON_ENABLE_CUSTOMER_AUTH === "true" && process.env.HEDERA_NETWORK === "testnet" &&
     (process.env.NEURON_ENABLE_LOCAL_STREAM === "true" || process.env.NEURON_ENABLE_REMOTE_STREAM === "true") &&
-    origin?.protocol === "http:" && ["localhost", "127.0.0.1"].includes(origin.hostname);
+    Boolean(localPilot || publicPilot);
 }
 
 function requestConfig(): RequestConfig {
@@ -61,6 +66,12 @@ function requestConfig(): RequestConfig {
   const maxFee = env.HEDERA_MAX_FEE_TINYBAR ?? "";
   if (!/^[1-9]\d{0,8}$/.test(maxFee) || Number(maxFee) > 100_000_000) {
     throw new Error("Customer request fee cap must be positive and at most 1 HBAR");
+  }
+  if (env.NEURON_APP_ORIGIN?.startsWith("https://")) {
+    const limit = env.NEURON_PUBLIC_REQUEST_LIMIT ?? "";
+    if (!/^[1-9]\d?$|^100$/.test(limit)) {
+      throw new Error("Public testnet request limit must be between 1 and 100");
+    }
   }
   const buyerKeyFile = env.HEDERA_BUYER_KEY_FILE ?? "";
   const operatorKeyFile = env.HEDERA_OPERATOR_KEY_FILE ?? "";
@@ -93,9 +104,8 @@ async function gatewayMatchesCustomer(sellerAccount: string, session: CustomerSe
       url.hostname === process.env.NEURON_GATEWAY_PUBLIC_HOST;
     if ((!local && !remote) || url.pathname !== "/stream" || url.search || url.hash || url.username || url.password) return false;
   } catch { return false; }
-  url.protocol = url.protocol === "wss:" ? "https:" : "http:";
-  url.pathname = "/session-check";
   try {
+    const endpoint = gatewayServerEndpoint(url, "/session-check");
     const tokenPath = process.env.NEURON_SESSION_TOKEN_FILE;
     if (!tokenPath || !isAbsolute(tokenPath) || !/^[0-9a-f]{32}$/.test(session.sessionId)) return false;
     const file = lstatSync(tokenPath);
@@ -106,7 +116,7 @@ async function gatewayMatchesCustomer(sellerAccount: string, session: CustomerSe
     const owner = session.ownerAddress.toLowerCase();
     const signature = createHmac("sha256", Buffer.from(token, "hex"))
       .update(`session-check:${session.sessionId}:${owner}:${sellerAccount}`).digest("hex");
-    const response = await fetch(url, { method: "POST", cache: "no-store", redirect: "error",
+    const response = await fetch(endpoint, { method: "POST", cache: "no-store", redirect: "error",
       headers: { "X-Neuron-Session-ID": session.sessionId, "X-Neuron-Owner": owner, "X-Neuron-Auth": signature },
       signal: AbortSignal.timeout(3_000) });
     if (!response.ok) return false;
@@ -182,6 +192,9 @@ function reserveRequest(session: CustomerSession, origin: URL, seller: string): 
       .get() as { created_at: number } | undefined;
     if (recent && now - recent.created_at < 120) throw new CustomerRequestConflict("Wait before requesting another testnet stream", 429);
     const count = db.prepare("SELECT COUNT(*) AS n FROM customer_service_requests").get() as { n: number };
+    if (origin.protocol === "https:" && count.n >= Number(process.env.NEURON_PUBLIC_REQUEST_LIMIT)) {
+      throw new CustomerRequestConflict("Public testnet request budget is exhausted", 429);
+    }
     if (count.n >= 10000) throw new Error("Customer request journal reached its size limit");
     const id = randomBytes(16).toString("hex");
     db.prepare("INSERT INTO customer_service_requests (id, session_id, owner_address, origin, seller_account, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'reserved', ?, ?)")
