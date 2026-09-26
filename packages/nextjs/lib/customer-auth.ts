@@ -45,13 +45,21 @@ function withDatabase<T>(work: (db: Database.Database) => T): T {
     db.pragma("synchronous = FULL");
     db.pragma("foreign_keys = ON");
     db.exec(`CREATE TABLE IF NOT EXISTS customer_challenges (
-      id TEXT PRIMARY KEY, owner_address TEXT NOT NULL, message TEXT NOT NULL,
+      id TEXT PRIMARY KEY, owner_address TEXT NOT NULL, origin TEXT NOT NULL, message TEXT NOT NULL,
       expires_at INTEGER NOT NULL, consumed_at INTEGER
     );
     CREATE TABLE IF NOT EXISTS customer_sessions (
       token_hash TEXT PRIMARY KEY, session_id TEXT NOT NULL UNIQUE,
-      owner_address TEXT NOT NULL, expires_at INTEGER NOT NULL, revoked_at INTEGER
+      owner_address TEXT NOT NULL, origin TEXT NOT NULL, expires_at INTEGER NOT NULL, revoked_at INTEGER
     );`);
+    db.transaction(() => {
+      for (const table of ["customer_challenges", "customer_sessions"]) {
+        const columns = db.pragma(`table_info(${table})`) as { name: string }[];
+        if (!columns.some(column => column.name === "origin")) {
+          db.exec(`ALTER TABLE ${table} ADD COLUMN origin TEXT NOT NULL DEFAULT ''`);
+        }
+      }
+    })();
     return work(db);
   } finally {
     db.close();
@@ -118,21 +126,21 @@ export function issueCustomerChallenge(origin: URL, claimedAddress: string): Rea
     db.prepare("DELETE FROM customer_challenges WHERE expires_at <= ? OR consumed_at IS NOT NULL").run(now);
     const count = db.prepare("SELECT COUNT(*) AS n FROM customer_challenges").get() as { n: number };
     if (count.n >= 1024) throw new Error("Too many outstanding sign-in challenges");
-    db.prepare("INSERT INTO customer_challenges (id, owner_address, message, expires_at) VALUES (?, ?, ?, ?)")
-      .run(challengeId, ownerAddress, message, now + challengeLifetime);
+    db.prepare("INSERT INTO customer_challenges (id, owner_address, origin, message, expires_at) VALUES (?, ?, ?, ?, ?)")
+      .run(challengeId, ownerAddress, origin.origin, message, now + challengeLifetime);
   })());
   return { challengeId, message, chainId: config.chainId };
 }
 
-export function verifyCustomerChallenge(challengeId: string, signature: string): Readonly<{
+export function verifyCustomerChallenge(origin: URL, challengeId: string, signature: string): Readonly<{
   session: CustomerSession; token: string;
 }> {
   if (!hex32.test(challengeId) || !signaturePattern.test(signature)) throw new InvalidCustomerChallenge("Invalid challenge or signature");
   const now = Math.floor(Date.now() / 1000);
   return withDatabase(db => {
-    const challenge = db.prepare("SELECT owner_address, message, expires_at, consumed_at FROM customer_challenges WHERE id = ?")
-      .get(challengeId) as { owner_address: string; message: string; expires_at: number; consumed_at: number | null } | undefined;
-    if (!challenge || challenge.consumed_at !== null || challenge.expires_at <= now) {
+    const challenge = db.prepare("SELECT owner_address, origin, message, expires_at, consumed_at FROM customer_challenges WHERE id = ?")
+      .get(challengeId) as { owner_address: string; origin: string; message: string; expires_at: number; consumed_at: number | null } | undefined;
+    if (!challenge || challenge.origin !== origin.origin || challenge.consumed_at !== null || challenge.expires_at <= now) {
       throw new InvalidCustomerChallenge("Challenge is missing, expired or already used");
     }
     let ownerAddress: string;
@@ -153,29 +161,29 @@ export function verifyCustomerChallenge(challengeId: string, signature: string):
       db.prepare("DELETE FROM customer_sessions WHERE expires_at <= ? OR revoked_at IS NOT NULL").run(now);
       const count = db.prepare("SELECT COUNT(*) AS n FROM customer_sessions").get() as { n: number };
       if (count.n >= 10000) throw new Error("Too many active customer sessions");
-      db.prepare("INSERT INTO customer_sessions (token_hash, session_id, owner_address, expires_at) VALUES (?, ?, ?, ?)")
-        .run(tokenHash, sessionId, ownerAddress, session.expiresAt);
+      db.prepare("INSERT INTO customer_sessions (token_hash, session_id, owner_address, origin, expires_at) VALUES (?, ?, ?, ?, ?)")
+        .run(tokenHash, sessionId, ownerAddress, origin.origin, session.expiresAt);
     })();
     return { session, token };
   });
 }
 
-export function getCustomerSession(token: string | undefined): CustomerSession | null {
+export function getCustomerSession(origin: URL, token: string | undefined): CustomerSession | null {
   if (!token || !hex64.test(token)) return null;
   const hash = createHash("sha256").update(token).digest("hex");
   const now = Math.floor(Date.now() / 1000);
   return withDatabase(db => {
-    const row = db.prepare("SELECT session_id, owner_address, expires_at FROM customer_sessions WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?")
-      .get(hash, now) as { session_id: string; owner_address: string; expires_at: number } | undefined;
+    const row = db.prepare("SELECT session_id, owner_address, expires_at FROM customer_sessions WHERE token_hash = ? AND origin = ? AND revoked_at IS NULL AND expires_at > ?")
+      .get(hash, origin.origin, now) as { session_id: string; owner_address: string; expires_at: number } | undefined;
     return row ? { sessionId: row.session_id, ownerAddress: row.owner_address, expiresAt: row.expires_at } : null;
   });
 }
 
-export function revokeCustomerSession(token: string | undefined): void {
+export function revokeCustomerSession(origin: URL, token: string | undefined): void {
   if (!token || !hex64.test(token)) return;
   const hash = createHash("sha256").update(token).digest("hex");
-  withDatabase(db => db.prepare("UPDATE customer_sessions SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL")
-    .run(Math.floor(Date.now() / 1000), hash));
+  withDatabase(db => db.prepare("UPDATE customer_sessions SET revoked_at = ? WHERE token_hash = ? AND origin = ? AND revoked_at IS NULL")
+    .run(Math.floor(Date.now() / 1000), hash, origin.origin));
 }
 
 export function customerCookieName(origin: URL): string {

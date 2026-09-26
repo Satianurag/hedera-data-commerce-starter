@@ -29,6 +29,14 @@ import (
 )
 
 var idPattern = regexp.MustCompile(`^0\.0\.[1-9]\d*$`)
+var ticketHex32 = regexp.MustCompile(`^[0-9a-f]{32}$`)
+var ticketHex40 = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+type ticketDetails struct {
+	nonce     string
+	sessionID string
+	owner     string
+}
 
 type subscriber struct {
 	frames  chan []byte
@@ -51,27 +59,43 @@ type gateway struct {
 }
 
 func (g *gateway) validTicket(candidate string, now time.Time) bool {
+	_, valid := g.parseTicket(candidate, now)
+	return valid
+}
+
+func (g *gateway) parseTicket(candidate string, now time.Time) (ticketDetails, bool) {
 	if len(g.instanceID) != 32 {
-		return false
+		return ticketDetails{}, false
 	}
 	parts := strings.Split(candidate, ".")
-	if len(parts) != 5 || parts[0] != "auth" || parts[1] != "v1" || len(parts[3]) != 32 {
-		return false
+	if len(parts) < 5 || parts[0] != "auth" || !ticketHex32.MatchString(parts[3]) ||
+		(parts[1] == "v1" && len(parts) != 5) || (parts[1] == "v2" && len(parts) != 7) ||
+		(parts[1] != "v1" && parts[1] != "v2") {
+		return ticketDetails{}, false
 	}
 	expiry, err := strconv.ParseInt(parts[2], 10, 64)
 	if err != nil || expiry < now.Unix() || expiry > now.Unix()+60 {
-		return false
+		return ticketDetails{}, false
 	}
-	if _, err := hex.DecodeString(parts[3]); err != nil {
-		return false
+	details := ticketDetails{nonce: parts[3]}
+	message := "v1:" + parts[2] + ":" + parts[3] + ":" + g.sellerAccount + ":" + g.instanceID
+	signatureIndex := 4
+	if parts[1] == "v2" {
+		if !ticketHex32.MatchString(parts[4]) || !ticketHex40.MatchString(parts[5]) {
+			return ticketDetails{}, false
+		}
+		details.sessionID = parts[4]
+		details.owner = "0x" + parts[5]
+		message = "v2:" + parts[2] + ":" + parts[3] + ":" + parts[4] + ":" + parts[5] + ":" + g.sellerAccount + ":" + g.instanceID
+		signatureIndex = 6
 	}
-	signature, err := hex.DecodeString(parts[4])
+	signature, err := hex.DecodeString(parts[signatureIndex])
 	if err != nil || len(signature) != sha256.Size {
-		return false
+		return ticketDetails{}, false
 	}
 	mac := hmac.New(sha256.New, g.secret)
-	_, _ = io.WriteString(mac, "v1:"+parts[2]+":"+parts[3]+":"+g.sellerAccount+":"+g.instanceID)
-	return hmac.Equal(signature, mac.Sum(nil))
+	_, _ = io.WriteString(mac, message)
+	return details, hmac.Equal(signature, mac.Sum(nil))
 }
 
 // consumeTicketLocked reserves a valid ticket while g.mu is held.
@@ -124,6 +148,7 @@ func (g *gateway) serveStream(w http.ResponseWriter, r *http.Request) {
 	}
 	validToken := false
 	ticket := ""
+	var identity ticketDetails
 	remoteHost, _, _ := net.SplitHostPort(r.RemoteAddr)
 	remoteIP := net.ParseIP(remoteHost)
 	for _, part := range strings.Split(r.Header.Get("Sec-WebSocket-Protocol"), ",") {
@@ -133,9 +158,10 @@ func (g *gateway) serveStream(w http.ResponseWriter, r *http.Request) {
 			validToken = true
 			break
 		}
-		if g.validTicket(candidate, time.Now()) {
+		if details, valid := g.parseTicket(candidate, time.Now()); valid {
 			validToken = true
 			ticket = candidate
+			identity = details
 			break
 		}
 	}
@@ -164,7 +190,7 @@ func (g *gateway) serveStream(w http.ResponseWriter, r *http.Request) {
 			g.subscriber = nil
 		}
 		if !accepted && ticket != "" {
-			delete(g.usedTickets, strings.Split(ticket, ".")[3])
+			delete(g.usedTickets, identity.nonce)
 		}
 		g.mu.Unlock()
 	}()
@@ -176,7 +202,7 @@ func (g *gateway) serveStream(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close(websocket.StatusNormalClosure, "session ended")
 	connectionID := ""
 	if ticket != "" {
-		connectionID = strings.Split(ticket, ".")[3]
+		connectionID = identity.nonce
 	} else {
 		idBytes := make([]byte, 16)
 		if _, err := rand.Read(idBytes); err != nil {
@@ -187,12 +213,12 @@ func (g *gateway) serveStream(w http.ResponseWriter, r *http.Request) {
 	}
 	var sentBytes uint64
 	if g.journal != nil {
-		if err := g.journal.record("opened", connectionID, 0); err != nil {
+		if err := g.journal.recordOwned("opened", connectionID, 0, identity.owner, identity.sessionID); err != nil {
 			_ = conn.Close(websocket.StatusInternalError, "session journal unavailable")
 			return
 		}
 		defer func() {
-			if err := g.journal.record("closed", connectionID, sentBytes); err != nil {
+			if err := g.journal.recordOwned("closed", connectionID, sentBytes, identity.owner, identity.sessionID); err != nil {
 				fmt.Fprintf(os.Stderr, "session journal close failed: %v\n", err)
 			}
 		}()

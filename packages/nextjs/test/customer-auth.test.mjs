@@ -110,6 +110,16 @@ test("customer wallet challenge is origin-bound, one-use and durable across rest
     await stopApp(app.child);
     app = await startApp("testnet", directory, port);
     assert.equal((await fetch(app.origin + "/api/customer-auth/session", { headers: { Cookie: cookie } })).status, 200);
+
+    await stopApp(app.child);
+    const otherOrigin = await startApp("testnet", directory, await freePort());
+    try {
+      assert.equal((await fetch(otherOrigin.origin + "/api/customer-auth/session", { headers: { Cookie: cookie } })).status, 401);
+    } finally {
+      await stopApp(otherOrigin.child);
+    }
+    app = await startApp("testnet", directory, port);
+    assert.equal((await fetch(app.origin + "/api/customer-auth/session", { headers: { Cookie: cookie } })).status, 200);
     assert.equal((await post(app.origin, "/api/customer-auth/logout", undefined,
       { Cookie: cookie, Origin: "http://wrong.example" })).status, 403);
     assert.equal((await post(app.origin, "/api/customer-auth/logout", undefined, { Cookie: cookie })).status, 200);

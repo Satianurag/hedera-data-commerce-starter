@@ -9,7 +9,7 @@ export async function GET(request: Request): Promise<Response> {
     if (request.headers.get("host") !== origin.host) {
       return Response.json({ error: "App host rejected" }, { status: 403 });
     }
-    const session = getCustomerSession(customerToken(request, origin));
+    const session = getCustomerSession(origin, customerToken(request, origin));
     return Response.json(session ?? { error: "Not signed in" },
       { status: session ? 200 : 401, headers: { "Cache-Control": "no-store" } });
   } catch {

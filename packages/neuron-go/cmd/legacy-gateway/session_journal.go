@@ -16,6 +16,17 @@ import (
 const maxJournalBytes = 64 << 20
 
 var connectionIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
+var ownerAddressPattern = regexp.MustCompile(`^0x[0-9a-f]{40}$`)
+
+type sessionIdentity struct {
+	ownerAddress string
+	sessionID    string
+}
+
+func validSessionIdentity(identity sessionIdentity) bool {
+	return identity.ownerAddress == "" && identity.sessionID == "" ||
+		ownerAddressPattern.MatchString(identity.ownerAddress) && connectionIDPattern.MatchString(identity.sessionID)
+}
 
 type sessionEvent struct {
 	Event         string `json:"event"`
@@ -24,16 +35,18 @@ type sessionEvent struct {
 	InstanceID    string `json:"instanceId"`
 	At            string `json:"at"`
 	Bytes         uint64 `json:"bytes"`
+	OwnerAddress  string `json:"ownerAddress,omitempty"`
+	SessionID     string `json:"customerSessionId,omitempty"`
 }
 
-// The gateway has one browser subscriber. This journal records its connection
-// lifecycle durably; it does not establish an authenticated customer identity.
+// The gateway has one browser subscriber. Version 2 tickets carry a customer
+// identity authenticated by the app; this journal preserves that binding.
 type sessionJournal struct {
 	mu            sync.Mutex
 	file          *os.File
 	sellerAccount string
 	instanceID    string
-	active        map[string]bool
+	active        map[string]sessionIdentity
 }
 
 func openSessionJournal(path, sellerAccount, instanceID string) (*sessionJournal, error) {
@@ -66,7 +79,7 @@ func openSessionJournal(path, sellerAccount, instanceID string) (*sessionJournal
 	if info.Size() > maxJournalBytes {
 		return closeOnError(errors.New("session journal exceeds the 64 MiB recovery bound"))
 	}
-	j := &sessionJournal{file: file, sellerAccount: sellerAccount, instanceID: instanceID, active: make(map[string]bool)}
+	j := &sessionJournal{file: file, sellerAccount: sellerAccount, instanceID: instanceID, active: make(map[string]sessionIdentity)}
 	if _, err := file.Seek(0, 0); err != nil {
 		return closeOnError(err)
 	}
@@ -74,9 +87,12 @@ func openSessionJournal(path, sellerAccount, instanceID string) (*sessionJournal
 	scanner.Buffer(make([]byte, 4096), 4096)
 	for scanner.Scan() {
 		var event sessionEvent
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil ||
-			event.SellerAccount != sellerAccount || !connectionIDPattern.MatchString(event.ConnectionID) ||
-			!connectionIDPattern.MatchString(event.InstanceID) || event.At == "" {
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			return closeOnError(errors.New("session journal has an invalid record"))
+		}
+		identity := sessionIdentity{event.OwnerAddress, event.SessionID}
+		if event.SellerAccount != sellerAccount || !connectionIDPattern.MatchString(event.ConnectionID) ||
+			!connectionIDPattern.MatchString(event.InstanceID) || event.At == "" || !validSessionIdentity(identity) {
 			return closeOnError(errors.New("session journal has an invalid record or seller mismatch"))
 		}
 		if _, err := time.Parse(time.RFC3339Nano, event.At); err != nil {
@@ -84,12 +100,12 @@ func openSessionJournal(path, sellerAccount, instanceID string) (*sessionJournal
 		}
 		switch event.Event {
 		case "opened":
-			if j.active[event.ConnectionID] || event.Bytes != 0 {
+			if _, exists := j.active[event.ConnectionID]; exists || event.Bytes != 0 {
 				return closeOnError(errors.New("session journal has a duplicate connection"))
 			}
-			j.active[event.ConnectionID] = true
+			j.active[event.ConnectionID] = identity
 		case "closed", "interrupted":
-			if !j.active[event.ConnectionID] {
+			if prior, exists := j.active[event.ConnectionID]; !exists || prior != identity {
 				return closeOnError(errors.New("session journal has a terminal record without an open connection"))
 			}
 			delete(j.active, event.ConnectionID)
@@ -103,8 +119,8 @@ func openSessionJournal(path, sellerAccount, instanceID string) (*sessionJournal
 	if _, err := file.Seek(0, 2); err != nil {
 		return closeOnError(err)
 	}
-	for id := range j.active {
-		if err := j.record("interrupted", id, 0); err != nil {
+	for id, identity := range j.active {
+		if err := j.recordOwned("interrupted", id, 0, identity.ownerAddress, identity.sessionID); err != nil {
 			return closeOnError(fmt.Errorf("cannot reconcile interrupted session: %w", err))
 		}
 	}
@@ -112,19 +128,26 @@ func openSessionJournal(path, sellerAccount, instanceID string) (*sessionJournal
 }
 
 func (j *sessionJournal) record(event, id string, bytes uint64) error {
+	return j.recordOwned(event, id, bytes, "", "")
+}
+
+func (j *sessionJournal) recordOwned(event, id string, bytes uint64, ownerAddress, sessionID string) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	if !connectionIDPattern.MatchString(id) {
-		return errors.New("invalid connection ID")
+	identity := sessionIdentity{ownerAddress, sessionID}
+	if !connectionIDPattern.MatchString(id) || !validSessionIdentity(identity) {
+		return errors.New("invalid connection or customer identity")
 	}
 	if event == "opened" {
-		if j.active[id] || bytes != 0 {
+		if _, exists := j.active[id]; exists || bytes != 0 {
 			return errors.New("connection is already open")
 		}
-	} else if event != "closed" && event != "interrupted" || !j.active[id] {
+	} else if prior, exists := j.active[id]; event != "closed" && event != "interrupted" || !exists || prior != identity {
 		return errors.New("connection is not open")
 	}
-	line, err := json.Marshal(sessionEvent{event, id, j.sellerAccount, j.instanceID, time.Now().UTC().Format(time.RFC3339Nano), bytes})
+	line, err := json.Marshal(sessionEvent{Event: event, ConnectionID: id, SellerAccount: j.sellerAccount,
+		InstanceID: j.instanceID, At: time.Now().UTC().Format(time.RFC3339Nano), Bytes: bytes,
+		OwnerAddress: ownerAddress, SessionID: sessionID})
 	if err != nil {
 		return err
 	}
@@ -135,7 +158,7 @@ func (j *sessionJournal) record(event, id string, bytes uint64) error {
 		return err
 	}
 	if event == "opened" {
-		j.active[id] = true
+		j.active[id] = identity
 	} else {
 		delete(j.active, id)
 	}
