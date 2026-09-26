@@ -1,0 +1,41 @@
+{
+  "name": "Neuron Customer App Starter",
+  "description": "Next.js Neuron service discovery and Hedera evidence with a Foundry native-HBAR escrow package",
+  "version": "0.1.0",
+  "create-scaffold-hbar": {
+    "capabilities": {
+      "frontend": ["nextjs-app"],
+      "solidityFramework": ["foundry"],
+      "packageManager": ["npm"]
+    },
+    "defaults": {
+      "frontend": "nextjs-app",
+      "solidityFramework": "foundry",
+      "packageManager": "npm"
+    },
+    "requirements": {
+      "node": ">=20.18.3"
+    },
+    "outro": {
+      "installCommand": "npm ci --engine-strict",
+      "sections": [
+        {
+          "title": "Verify the template",
+          "steps": [
+            { "command": "npm run build" },
+            { "command": "npm run typecheck" },
+            { "command": "npm run lint" },
+            { "command": "npm test" }
+          ]
+        },
+        {
+          "title": "Run the read-only app",
+          "steps": [
+            { "command": "npm run dev" },
+            { "text": "See README.md for local testnet seller sessions and server-only transaction commands." }
+          ]
+        }
+      ]
+    }
+  }
+}
