@@ -7,6 +7,12 @@ export { inspectSignedTopicEnvelope } from "./signed-topic.js";
 export type { SignedTopicEnvelope } from "./signed-topic.js";
 export { verifySignedSellerQuote, getVerifiedSellerQuote, confirmEscrowFunding } from "./commerce.js";
 export type { SellerQuote, VerifiedSellerQuote, QuoteExpectation } from "./commerce.js";
+export { verifyDraft008ServiceRequest, getVerifiedDraft008ServiceRequest,
+  draft008ResponseContextFromRequest, verifyDraft008ServiceResponse,
+  getVerifiedDraft008ServiceResponse } from "./draft-008-negotiation.js";
+export type { Draft008RequestExpectation, Draft008ServiceRequest, VerifiedDraft008ServiceRequest,
+  Draft008ResponseContext, Draft008ServiceResponse,
+  VerifiedDraft008ServiceResponse } from "./draft-008-negotiation.js";
 export { listLegacyDevices, checkLegacyDeviceBinding } from "./legacy.js";
 export type { LegacyDevice } from "./legacy.js";
 export { ModeSFramer } from "./frames.js";

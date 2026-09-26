@@ -2,17 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ModeSFramer } from "@neuron/hedera";
+import { InjectedWalletPicker } from "../wallet/picker";
+import { selectedInjectedWallet, subscribeWalletInvalidation, type WalletProvider } from "../wallet/injected";
 
 type Counts = { bytes: number; chunks: number; valid: number; invalid: number; aircraft: number };
 type Ticket = { url: string; sellerAccount: string; ticket: string };
 type CustomerSession = { sessionId: string; ownerAddress: string; expiresAt: number };
 type SellerRequest = { id: string; state: "reserved" | "submitting" | "uncertain" | "confirmed";
   sellerAccount: string; transactionId: string | null; payloadSha256: string | null; topicSequence: number | null };
-type WalletProvider = {
-  request(args: { method: string; params?: unknown[] }): Promise<unknown>;
-  on?(event: "accountsChanged" | "chainChanged" | "disconnect", listener: (...args: unknown[]) => void): void;
-  removeListener?(event: "accountsChanged" | "chainChanged" | "disconnect", listener: (...args: unknown[]) => void): void;
-};
 const emptyCounts = (): Counts => ({ bytes: 0, chunks: 0, valid: 0, invalid: 0, aircraft: 0 });
 const isTestnetChain = (value: unknown): boolean =>
   typeof value === "string" && /^0x[0-9a-f]+$/i.test(value) && BigInt(value) === 296n;
@@ -27,6 +24,7 @@ const isCustomerSession = (value: unknown): value is CustomerSession =>
     Number.isFinite((value as CustomerSession).expiresAt));
 
 async function matchingWallet(provider: WalletProvider, ownerAddress: string): Promise<void> {
+  if (selectedInjectedWallet().provider !== provider) throw new Error("The selected wallet provider changed");
   const [accounts, chain] = await Promise.all([
     provider.request({ method: "eth_accounts" }), provider.request({ method: "eth_chainId" }),
   ]);
@@ -34,6 +32,7 @@ async function matchingWallet(provider: WalletProvider, ownerAddress: string): P
   if (walletAddress(accounts)?.toLowerCase() !== ownerAddress.toLowerCase()) {
     throw new Error("The connected wallet no longer matches this browser session. Sign out and sign in again.");
   }
+  if (selectedInjectedWallet().provider !== provider) throw new Error("The selected wallet provider changed");
 }
 
 function walletFailure(error: unknown): string {
@@ -88,7 +87,7 @@ export default function SessionsPage() {
   const authBusyRef = useRef(false);
   const authRevision = useRef(0);
   const authSessionRef = useRef<CustomerSession | null>(null);
-  const watchedWallet = useRef<{ provider: WalletProvider; listener: (...args: unknown[]) => void } | null>(null);
+  const sessionWallet = useRef<WalletProvider | null>(null);
   const [requestEnabled, setRequestEnabled] = useState(false);
   const [sellerRequest, setSellerRequest] = useState<SellerRequest | null>(null);
   const [requestMessage, setRequestMessage] = useState("");
@@ -121,11 +120,13 @@ export default function SessionsPage() {
         setAuthSession(session);
         setAuth("signedIn");
         void refreshRequest();
-        const provider = (window as Window & { ethereum?: WalletProvider }).ethereum;
+        let provider: WalletProvider | null = null;
+        try { provider = selectedInjectedWallet().provider; } catch { /* Discovery may still be pending. */ }
         if (provider) {
-          watchWallet(provider);
           const revision = authRevision.current;
-          void matchingWallet(provider, session.ownerAddress).catch(error => {
+          void matchingWallet(provider, session.ownerAddress).then(() => {
+            if (active && revision === authRevision.current) sessionWallet.current = provider;
+          }).catch(error => {
             if (active && revision === authRevision.current) setAuthMessage(walletFailure(error));
           });
         } else setAuthMessage("Browser session restored. Reconnect the same wallet before using it.");
@@ -133,7 +134,6 @@ export default function SessionsPage() {
     }).catch(() => { if (active) setAuth("unavailable"); });
     return () => { active = false; };
   // Session restoration runs once; wallet changes are handled by the listener below.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -143,6 +143,7 @@ export default function SessionsPage() {
       if (authSessionRef.current && authSessionRef.current.expiresAt <= Date.now() / 1000) {
         authRevision.current++;
         authSessionRef.current = null;
+        sessionWallet.current = null;
         setAuthSession(null);
         setAuth("required");
         setAuthMessage("Browser session expired. Sign in again to request seller data.");
@@ -163,17 +164,31 @@ export default function SessionsPage() {
 
   useEffect(() => {
     const walletRevision = authRevision;
-    const provider = (window as Window & { ethereum?: WalletProvider }).ethereum;
-    if (provider) watchWallet(provider);
+    const unsubscribe = subscribeWalletInvalidation(reason => {
+      walletRevision.current++;
+      const session = authSessionRef.current;
+      if (session && (sessionWallet.current || reason === "provider")) {
+        void signOut("Wallet account, provider or network changed. Sign in again on Hedera testnet.");
+      } else if (session) {
+        try {
+          const provider = selectedInjectedWallet().provider;
+          const revision = walletRevision.current;
+          void matchingWallet(provider, session.ownerAddress).then(() => {
+            if (revision === walletRevision.current) {
+              sessionWallet.current = provider;
+              setAuthMessage("");
+            }
+          }).catch(error => {
+            if (revision === walletRevision.current) setAuthMessage(walletFailure(error));
+          });
+        } catch { setAuthMessage("Choose the wallet used for this browser session before requesting data."); }
+      } else if (authBusyRef.current) setAuthMessage("Wallet changed during sign-in. Please try again.");
+    });
     return () => {
-      const watched = watchedWallet.current;
-      if (watched) for (const event of ["accountsChanged", "chainChanged", "disconnect"] as const) {
-        watched.provider.removeListener?.(event, watched.listener);
-      }
-      watchedWallet.current = null;
+      unsubscribe();
       walletRevision.current++;
     };
-    // The provider listener is registered once and reads live session/revision refs.
+    // The shared provider boundary listens to the chosen EIP-1193 provider.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -192,28 +207,13 @@ export default function SessionsPage() {
     setStatus("Stopped");
   }
 
-  function watchWallet(provider: WalletProvider) {
-    if (watchedWallet.current?.provider === provider) return;
-    const previous = watchedWallet.current;
-    if (previous) for (const event of ["accountsChanged", "chainChanged", "disconnect"] as const) {
-      previous.provider.removeListener?.(event, previous.listener);
-    }
-    watchedWallet.current = null;
-    if (!provider.on || !provider.removeListener) return;
-    const listener = () => {
-      authRevision.current++;
-      if (authSessionRef.current) void signOut("Wallet account or network changed. Sign in again on Hedera testnet.");
-      else if (authBusyRef.current) setAuthMessage("Wallet changed during sign-in. Please try again.");
-    };
-    for (const event of ["accountsChanged", "chainChanged", "disconnect"] as const) provider.on(event, listener);
-    watchedWallet.current = { provider, listener };
-  }
-
   async function ensureMatchingSession(): Promise<void> {
     const session = authSessionRef.current;
-    const provider = (window as Window & { ethereum?: WalletProvider }).ethereum;
-    if (!session || !provider) throw new Error("Reconnect the wallet used for this browser session");
-    watchWallet(provider);
+    if (!session) throw new Error("Reconnect the wallet used for this browser session");
+    const provider = selectedInjectedWallet().provider;
+    if (sessionWallet.current && sessionWallet.current !== provider) {
+      throw new Error("Wallet provider changed. Sign out and sign in again.");
+    }
     if (session.expiresAt <= Date.now() / 1000) {
       throw new Error("Browser session expired. Sign out and sign in again.");
     }
@@ -241,9 +241,7 @@ export default function SessionsPage() {
     let revision = ++authRevision.current;
     setAuthMessage("Checking Hedera testnet wallet");
     try {
-      const provider = (window as Window & { ethereum?: WalletProvider }).ethereum;
-      if (!provider) throw new Error("An EVM wallet is required to sign in");
-      watchWallet(provider);
+      const provider = selectedInjectedWallet().provider;
       const accounts = await provider.request({ method: "eth_requestAccounts" });
       const address = walletAddress(accounts);
       if (!address) throw new Error("Wallet did not return an EVM account");
@@ -296,6 +294,7 @@ export default function SessionsPage() {
         return;
       }
       authSessionRef.current = session;
+      sessionWallet.current = provider;
       setAuthSession(session);
       setAuth("signedIn");
       setAuthMessage("Signed in. No payment was authorized.");
@@ -325,6 +324,7 @@ export default function SessionsPage() {
       const response = await fetch("/api/customer-auth/logout", { method: "POST" });
       if (!response.ok) throw new Error("Sign-out request was rejected");
       authSessionRef.current = null;
+      sessionWallet.current = null;
       setAuthSession(null);
       setAuth("required");
       setAuthMessage(reason);
@@ -430,6 +430,7 @@ export default function SessionsPage() {
     {auth === "checking" && <p role="status">Checking your browser session…</p>}
     {auth === "disabled" && <p>Wallet sign-in is disabled for this read-only or local configuration.</p>}
     {auth === "required" && <p>Sign in with a Hedera testnet EVM wallet. This authenticates your browser for one hour; the signature does not authorize a payment.</p>}
+    {(auth === "required" || auth === "signedIn") && <InjectedWalletPicker />}
     {auth === "signedIn" && authSession && <p>Signed in as <span className="mono">{authSession.ownerAddress}</span>.</p>}
     {auth === "unavailable" && <p className="notice">Customer sign-in is unavailable. Live data cannot be connected from this browser.</p>}
     {auth === "required" && <button type="button" className="secondary" onClick={signIn} disabled={authBusy}>
