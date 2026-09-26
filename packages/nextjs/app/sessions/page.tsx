@@ -14,6 +14,7 @@ export default function SessionsPage() {
   const aircraft = useRef(new Set<string>());
   const counts = useRef<Counts>(emptyCounts());
   const lastByteAt = useRef(0);
+  const openedAt = useRef(0);
   const [view, setView] = useState<Counts>(emptyCounts);
   const [status, setStatus] = useState("Stopped");
   const [seller, setSeller] = useState<string | null>(null);
@@ -24,8 +25,9 @@ export default function SessionsPage() {
     const timer = setInterval(() => {
       setView({ ...counts.current });
       if (connection.current?.readyState === WebSocket.OPEN) {
-        setStatus(lastByteAt.current === 0 ? "Waiting for seller bytes" :
-          Date.now() - lastByteAt.current > 15_000 ? "Stale: no bytes for 15 seconds" : "Streaming");
+        const latest = lastByteAt.current || openedAt.current;
+        setStatus(Date.now() - latest > 15_000 ? "Stale: no bytes for 15 seconds" :
+          lastByteAt.current === 0 ? "Waiting for seller bytes" : "Streaming");
       }
     }, 1_000);
     return () => { clearInterval(timer); sessionGeneration.current++; activeConnection.current?.close(); };
@@ -40,6 +42,7 @@ export default function SessionsPage() {
     counts.current = emptyCounts();
     setView(emptyCounts());
     lastByteAt.current = 0;
+    openedAt.current = 0;
     setSeller(null);
     setStatus("Stopped");
   }
@@ -62,7 +65,12 @@ export default function SessionsPage() {
       connection.current = socket;
       setSeller(ticket.sellerAccount);
       setStatus("Connecting to seller stream");
-      socket.onopen = () => { if (current === generation.current) setStatus("Waiting for seller bytes"); };
+      socket.onopen = () => {
+        if (current === generation.current) {
+          openedAt.current = Date.now();
+          setStatus("Waiting for seller bytes");
+        }
+      };
       socket.onmessage = event => {
         if (current !== generation.current) return;
         if (!(event.data instanceof ArrayBuffer)) { socket.close(1003, "binary frames required"); return; }
