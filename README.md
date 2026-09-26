@@ -22,6 +22,17 @@ Durable customer sessions, signed external seller terms, safe app checkout and m
 
 Use Node **20.18.3** or **22.23.3**. The versions in `package-lock.json` were selected for compatibility with the Node 20 floor.
 
+From an empty directory, scaffold the public template without installing Foundry globally:
+
+```bash
+npx --yes --package=@foundry-rs/forge@1.7.1 --package=create-scaffold-hbar@0.4.0 -c 'create-scaffold-hbar neuron-customer-app --template Satianurag/neuron-customer-app-scaffold-hbar --frontend nextjs-app --solidity-framework foundry --package-manager npm --network testnet --skip-install --skip-hedera-skills --yes --ci'
+cd neuron-customer-app
+npm ci --engine-strict
+HEDERA_NETWORK=testnet npm run dev
+```
+
+The same standalone `npx` command passed from `/tmp` on 26 September 2026; its clone then passed install, build, typecheck, lint, tests and zero-finding npm audit. The CLI's `--network` selection does not set the app's runtime network, so set `HEDERA_NETWORK` explicitly.
+
 ```bash
 npm ci --engine-strict
 npm run build
