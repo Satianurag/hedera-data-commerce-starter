@@ -2,6 +2,8 @@
 
 > **For agentic workers:** Checkboxes track *complete tasks*, so partial work remains unchecked. The latest user instruction explicitly resumes **coding the full product**. Keep the real-infrastructure, no-mocks, end-to-end objective; earlier small-slice/bounty gates are milestones, not the completion definition. Read [AGENTS.md](../../../AGENTS.md) for current evidence.
 
+**Visibility update (26 September):** The owner requested GitHub privacy; `Satianurag/neuron-customer-app-scaffold-hbar` is verified **private**. Preserve this choice. All public CLI clone checks below describe historical revisions and are not a current anonymous reproducibility claim. Public bounty submission remains gated on an explicit later visibility decision.
+
 **Goal:** Build a reproducible Scaffold-HBAR customer application template that proves a signed Neuron service session and Hedera testnet evidence, then adds independently gated live-seller commerce and a separate mainnet release.
 
 **Target architecture:** The npm monorepo has a Next.js customer app, focused Neuron/Hedera reader, Go HCS writer and legacy QUIC/WebSocket gateway, and Foundry native-HBAR escrow package. Candidate HCS, a real legacy-seller stream in the Next.js browser over local and remote WSS, and distinct-account escrow release/refund transactions passed on testnet. The current read pages use the live legacy directory and real HCS/Mirror data. The testnet stream page uses a single-use ticket from a loopback-only app; durable customer ownership remains. A public CLI scaffold and source-linked HCS transaction passed. Signed spec-first sellers, external quote-bound checkout and mainnet deployment each require independent proof.

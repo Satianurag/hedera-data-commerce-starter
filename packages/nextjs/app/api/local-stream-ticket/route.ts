@@ -1,5 +1,6 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
+import { customerAuthOrigin, customerToken, getCustomerSession } from "../../../lib/customer-auth";
 
 export const runtime = "nodejs";
 
@@ -27,8 +28,19 @@ export async function POST(request: Request): Promise<Response> {
   }
   // This route is a loopback-only test control. A copied Host header is not
   // authentication, but rejecting mismatched hosts catches public proxy errors.
-  if (request.headers.get("host") !== appOrigin.host || new URL(request.url).host !== appOrigin.host) {
+  if (request.headers.get("host") !== appOrigin.host) {
     return Response.json({ error: "App host rejected" }, { status: 403 });
+  }
+  if (process.env.NEURON_ENABLE_CUSTOMER_AUTH === "true") {
+    try {
+      const authOrigin = customerAuthOrigin();
+      if (!authOrigin || authOrigin.origin !== appOrigin.origin) throw new Error("Customer auth origin mismatch");
+      if (!getCustomerSession(customerToken(request, authOrigin))) {
+        return Response.json({ error: "Customer sign-in required" }, { status: 401 });
+      }
+    } catch {
+      return Response.json({ error: "Customer sign-in is unavailable" }, { status: 503 });
+    }
   }
   const sellerAccount = process.env.NEURON_SELLER_ACCOUNT_ID;
   const gatewayUrl = process.env.NEURON_GATEWAY_WS_URL;
