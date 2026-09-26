@@ -3,6 +3,8 @@ export type { HederaNetwork, NetworkConfig } from "./network.js";
 export { getMirrorAccount, getMirrorTopic } from "./mirror.js";
 export { getLatestTopicMessage } from "./hcs.js";
 export type { TopicMessage } from "./hcs.js";
+export { inspectSignedTopicEnvelope } from "./signed-topic.js";
+export type { SignedTopicEnvelope } from "./signed-topic.js";
 export { listLegacyDevices, checkLegacyDeviceBinding } from "./legacy.js";
 export type { LegacyDevice } from "./legacy.js";
 export { ModeSFramer } from "./frames.js";
