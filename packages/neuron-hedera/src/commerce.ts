@@ -105,7 +105,7 @@ export async function verifySignedSellerQuote(
   if (!envelope) throw new Error("Seller quote has no signed TopicMessage envelope");
   const quote = parseQuote(envelope.payload);
   if (quote.type !== "neuronCustomerQuote" || quote.version !== "1" || quote.network !== config.network ||
-      quote.chainId !== "296" || quote.asset !== "HBAR") {
+      quote.chainId !== String(config.chainId) || quote.asset !== "HBAR") {
     throw new Error("Unsupported quote type, version, network, chain or asset");
   }
   if (quote.sellerAccountId !== expected.sellerAccountId || quote.serviceId !== expected.serviceId ||

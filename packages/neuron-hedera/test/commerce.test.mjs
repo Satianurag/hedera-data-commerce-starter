@@ -86,6 +86,7 @@ test("money, network, expiry, service and contract mismatches fail closed", asyn
     [{ amountTinybar: "0.1" }, expected],
     [{ asset: "USDC" }, expected],
     [{ network: "mainnet" }, expected],
+    [{ chainId: "295" }, expected],
     [{ expiresAt: String(now - 1n) }, expected],
     [{ refundAfter: String(now - 1n) }, expected],
     [{ refundAfter: String(now + 3600n) }, expected],

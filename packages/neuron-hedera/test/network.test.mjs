@@ -7,6 +7,8 @@ test("testnet and mainnet use distinct real Mirror endpoints", () => {
   const mainnet = networkConfigFromEnv({ HEDERA_NETWORK: "mainnet" });
   assert.equal(testnet.mirrorBaseUrl, "https://testnet.mirrornode.hedera.com");
   assert.equal(mainnet.mirrorBaseUrl, "https://mainnet.mirrornode.hedera.com");
+  assert.equal(testnet.chainId, 296);
+  assert.equal(mainnet.chainId, 295);
   assert.ok(testnet.legacyDirectoryUrl);
   assert.equal(mainnet.legacyDirectoryUrl, undefined);
 });
@@ -16,6 +18,13 @@ test("known cross-network Mirror URL fails closed", () => {
     HEDERA_NETWORK: "mainnet",
     HEDERA_MIRROR_URL: "https://testnet.mirrornode.hedera.com",
   }), /not approved/);
+});
+
+test("configured EVM chain ID and forged config cannot cross networks", () => {
+  assert.throws(() => networkConfigFromEnv({ HEDERA_NETWORK: "testnet", HEDERA_CHAIN_ID: "295" }), /does not match/);
+  assert.throws(() => networkConfigFromEnv({ HEDERA_NETWORK: "mainnet", HEDERA_CHAIN_ID: "296" }), /does not match/);
+  assert.throws(() => networkConfigFromEnv({ HEDERA_NETWORK: "testnet", HEDERA_CHAIN_ID: "0296" }), /does not match/);
+  assert.equal(networkConfigFromEnv({ HEDERA_NETWORK: "testnet", HEDERA_CHAIN_ID: "296" }).chainId, 296);
 });
 
 test("unknown Mirror and wrong-network directory fail closed", () => {
@@ -32,6 +41,12 @@ test("unknown Mirror and wrong-network directory fail closed", () => {
 test("forged config cannot reach Mirror", async () => {
   await assert.rejects(getMirrorTopic({
     network: "mainnet",
+    chainId: 295,
     mirrorBaseUrl: "https://example.com",
+  }, "0.0.1"), /not approved/);
+  await assert.rejects(getMirrorTopic({
+    network: "mainnet",
+    chainId: 296,
+    mirrorBaseUrl: "https://mainnet.mirrornode.hedera.com",
   }, "0.0.1"), /not approved/);
 });
