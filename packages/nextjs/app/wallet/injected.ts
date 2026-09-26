@@ -161,11 +161,31 @@ export function serverWalletSnapshot(): WalletSnapshot { return emptySnapshot; }
 
 export function selectInjectedWallet(id: string): void { setSelection(id); }
 
+const walletConnectId = "walletconnect:testnet";
+
+export function registerWalletConnect(provider: WalletProvider): void {
+  const previous = entries.get(walletConnectId);
+  if (previous && previous.provider !== provider) {
+    if (selectedId === walletConnectId) setSelection(null);
+    entries.delete(walletConnectId);
+  }
+  register(walletConnectId, "WalletConnect", "Hedera testnet · compatible wallets including HashPack",
+    provider, walletConnectId);
+  setSelection(walletConnectId);
+}
+
+export function removeWalletConnect(provider: WalletProvider): void {
+  if (entries.get(walletConnectId)?.provider !== provider) return;
+  if (selectedId === walletConnectId) setSelection(null);
+  entries.delete(walletConnectId);
+  publish();
+}
+
 export function selectedInjectedWallet(): { provider: WalletProvider; revision: number } {
   discoverInjectedWallets();
   const entry = selectedId && entries.get(selectedId);
   if (!entry) throw new Error(entries.size > 1 ?
-    "Choose the wallet you want to use before signing." : "An injected EVM wallet is required.");
+    "Choose the wallet you want to use before signing." : "A selected EVM wallet is required.");
   if (typeof entry.provider.on !== "function" || typeof entry.provider.removeListener !== "function") {
     setSelection(null);
     throw new Error("This wallet cannot report account or network changes. Choose a supported wallet.");

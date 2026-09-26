@@ -66,6 +66,7 @@ type gateway struct {
 	sessionCheckURL  string
 	sessionCheckHTTP *http.Client
 	journal          *sessionJournal
+	publicListener   bool
 	usedTickets      map[string]int64
 	bytes            uint64
 	chunks           uint64
@@ -77,6 +78,12 @@ func (g *gateway) validTicket(candidate string, now time.Time) bool {
 	return valid
 }
 
+// A public gateway may only carry a customer-bound v2 ticket. Local legacy
+// probes can still use v1 or the owner-held static token on loopback.
+func (g *gateway) requiresCustomerSession() bool {
+	return g.publicListener || strings.HasPrefix(g.origin, "https://")
+}
+
 func (g *gateway) parseTicket(candidate string, now time.Time) (ticketDetails, bool) {
 	if len(g.instanceID) != 32 {
 		return ticketDetails{}, false
@@ -84,7 +91,8 @@ func (g *gateway) parseTicket(candidate string, now time.Time) (ticketDetails, b
 	parts := strings.Split(candidate, ".")
 	if len(parts) < 5 || parts[0] != "auth" || !ticketHex32.MatchString(parts[3]) ||
 		(parts[1] == "v1" && len(parts) != 5) || (parts[1] == "v2" && len(parts) != 7) ||
-		(parts[1] != "v1" && parts[1] != "v2") {
+		(parts[1] != "v1" && parts[1] != "v2") ||
+		(g.requiresCustomerSession() && parts[1] != "v2") {
 		return ticketDetails{}, false
 	}
 	expiry, err := strconv.ParseInt(parts[2], 10, 64)
@@ -304,7 +312,8 @@ func (g *gateway) serveStream(w http.ResponseWriter, r *http.Request) {
 	remoteIP := net.ParseIP(remoteHost)
 	for _, part := range strings.Split(r.Header.Get("Sec-WebSocket-Protocol"), ",") {
 		candidate := strings.TrimSpace(part)
-		localStatic := remoteIP != nil && remoteIP.IsLoopback() && len(candidate) == len(g.token)+5 && subtle.ConstantTimeCompare([]byte(candidate), []byte("auth."+g.token)) == 1
+		localStatic := !g.requiresCustomerSession() && remoteIP != nil && remoteIP.IsLoopback() &&
+			len(candidate) == len(g.token)+5 && subtle.ConstantTimeCompare([]byte(candidate), []byte("auth."+g.token)) == 1
 		if localStatic {
 			validToken = true
 			break
@@ -650,13 +659,16 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	g := &gateway{sellerAccount: sellerID, sellerPublicKey: sellerKey, origin: origin,
-		token: token, secret: secret, instanceID: hex.EncodeToString(instanceBytes)}
+		token: token, secret: secret, instanceID: hex.EncodeToString(instanceBytes), publicListener: !loopback}
 	if checkURL := os.Getenv("NEURON_GATEWAY_SESSION_CHECK_URL"); checkURL != "" {
 		if err := validateSessionCheckURL(checkURL); err != nil {
 			return err
 		}
 		g.sessionCheckURL = checkURL
 		g.sessionCheckHTTP = newSessionCheckClient()
+	}
+	if g.requiresCustomerSession() && g.sessionCheckURL == "" {
+		return errors.New("public gateway requires NEURON_GATEWAY_SESSION_CHECK_URL for customer-bound streams")
 	}
 	journalPath := os.Getenv("NEURON_SESSION_JOURNAL_FILE")
 	if journalPath == "" && !loopback {
