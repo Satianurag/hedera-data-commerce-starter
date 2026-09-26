@@ -136,6 +136,41 @@ func TestCustomerTicketBindsWalletSessionSellerAndGateway(t *testing.T) {
 	}
 }
 
+func TestSessionCheckRequiresSecretAndActiveCustomer(t *testing.T) {
+	secret := []byte("01234567890123456789012345678901")
+	owner := "0x1234567890123456789012345678901234567890"
+	seller := "0.0.4318411"
+	g := &gateway{sellerAccount: seller, secret: secret,
+		subscriber: &subscriber{sessionID: testSession, owner: owner}}
+	check := func(session, requestedOwner, signature string) (int, string) {
+		r := httptest.NewRequest(http.MethodPost, "http://localhost/session-check", nil)
+		r.Header.Set("X-Neuron-Session-ID", session)
+		r.Header.Set("X-Neuron-Owner", requestedOwner)
+		r.Header.Set("X-Neuron-Auth", signature)
+		w := httptest.NewRecorder()
+		g.serveSessionCheck(w, r)
+		return w.Code, w.Body.String()
+	}
+	mac := hmac.New(sha256.New, secret)
+	_, _ = mac.Write([]byte("session-check:" + testSession + ":" + owner + ":" + seller))
+	signature := hex.EncodeToString(mac.Sum(nil))
+	if status, _ := check(testSession, owner, ""); status != http.StatusUnauthorized {
+		t.Fatal("unsigned session check accepted")
+	}
+	if status, body := check(testSession, owner, signature); status != http.StatusOK || body != "{\"connected\":true}\n" {
+		t.Fatalf("active owner session rejected: HTTP %d %s", status, body)
+	}
+	if status, body := check("00000000000000000000000000000000", owner, signature); status != http.StatusUnauthorized || body == "" {
+		t.Fatal("session substitution accepted")
+	}
+	g.mu.Lock()
+	g.subscriber = nil
+	g.mu.Unlock()
+	if status, body := check(testSession, owner, signature); status != http.StatusOK || body != "{\"connected\":false}\n" {
+		t.Fatalf("disconnected owner session still active: HTTP %d %s", status, body)
+	}
+}
+
 func TestCustomerTicketWebSocketCarriesBytesAndJournalsOwner(t *testing.T) {
 	secret := []byte("01234567890123456789012345678901")
 	instanceID := "0123456789abcdef0123456789abcdef"

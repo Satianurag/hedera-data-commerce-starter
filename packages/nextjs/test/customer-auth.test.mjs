@@ -27,6 +27,7 @@ async function startApp(network, directory, port) {
   const child = spawn(process.execPath, [nextBin, "start", "-H", "127.0.0.1", "-p", String(port)], {
     cwd: appDirectory,
     env: { ...process.env, HEDERA_NETWORK: network, NEURON_ENABLE_CUSTOMER_AUTH: "true",
+      NEURON_ENABLE_CUSTOMER_REQUEST: "true",
       NEURON_ENABLE_LOCAL_STREAM: "true", NEURON_ENABLE_REMOTE_STREAM: "false",
       NEURON_SELLER_ACCOUNT_ID: "", NEURON_GATEWAY_WS_URL: "", NEURON_SESSION_TOKEN_FILE: "",
       NEURON_APP_ORIGIN: origin, NEURON_CUSTOMER_DB_FILE: join(directory, "auth.sqlite") },
@@ -106,6 +107,15 @@ test("customer wallet challenge is origin-bound, one-use and durable across rest
     assert.equal(ticketWithoutCookie.status, 401);
     const ticketWithCookie = await post(app.origin, "/api/local-stream-ticket", undefined, { Cookie: cookie });
     assert.equal(ticketWithCookie.status, 503);
+    assert.equal((await fetch(app.origin + "/api/customer-request")).status, 401);
+    assert.equal((await post(app.origin, "/api/customer-request", undefined)).status, 401);
+    assert.equal((await post(app.origin, "/api/customer-request", undefined,
+      { Cookie: cookie, Origin: "http://wrong.example" })).status, 403);
+    assert.equal((await post(app.origin, "/api/customer-request", { seller: "0.0.4318411" },
+      { Cookie: cookie })).status, 400);
+    const emptyRequest = await fetch(app.origin + "/api/customer-request", { headers: { Cookie: cookie } });
+    assert.equal(emptyRequest.status, 503);
+    assert.equal((await post(app.origin, "/api/customer-request", undefined, { Cookie: cookie })).status, 503);
 
     await stopApp(app.child);
     app = await startApp("testnet", directory, port);
@@ -135,6 +145,7 @@ test("customer wallet challenge is origin-bound, one-use and durable across rest
   app = await startApp("mainnet", directory, port);
   try {
     assert.equal((await post(app.origin, "/api/customer-auth/challenge", { address: Wallet.createRandom().address })).status, 404);
+    assert.equal((await post(app.origin, "/api/customer-request", undefined)).status, 404);
   } finally {
     await stopApp(app.child);
   }

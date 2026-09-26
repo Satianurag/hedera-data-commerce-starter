@@ -38,7 +38,7 @@ function databasePath(): string {
   return path;
 }
 
-function withDatabase<T>(work: (db: Database.Database) => T): T {
+export function withCustomerDatabase<T>(work: (db: Database.Database) => T): T {
   const db = new Database(databasePath(), { fileMustExist: true, timeout: 5000 });
   try {
     db.pragma("journal_mode = WAL");
@@ -51,6 +51,13 @@ function withDatabase<T>(work: (db: Database.Database) => T): T {
     CREATE TABLE IF NOT EXISTS customer_sessions (
       token_hash TEXT PRIMARY KEY, session_id TEXT NOT NULL UNIQUE,
       owner_address TEXT NOT NULL, origin TEXT NOT NULL, expires_at INTEGER NOT NULL, revoked_at INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS customer_service_requests (
+      id TEXT PRIMARY KEY, session_id TEXT NOT NULL, owner_address TEXT NOT NULL,
+      origin TEXT NOT NULL, seller_account TEXT NOT NULL,
+      state TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+      transaction_id TEXT, payload_sha256 TEXT, topic_sequence INTEGER,
+      UNIQUE(session_id)
     );`);
     db.transaction(() => {
       for (const table of ["customer_challenges", "customer_sessions"]) {
@@ -122,7 +129,7 @@ export function issueCustomerChallenge(origin: URL, claimedAddress: string): Rea
     `EVM Chain ID: ${config.chainId}`, `Nonce: ${nonce}`, `Issued At: ${new Date(now * 1000).toISOString()}`,
     `Expires At: ${new Date((now + challengeLifetime) * 1000).toISOString()}`,
     "This signature authenticates a browser session. It does not authorize a payment."].join("\n");
-  withDatabase(db => db.transaction(() => {
+  withCustomerDatabase(db => db.transaction(() => {
     db.prepare("DELETE FROM customer_challenges WHERE expires_at <= ? OR consumed_at IS NOT NULL").run(now);
     const count = db.prepare("SELECT COUNT(*) AS n FROM customer_challenges").get() as { n: number };
     if (count.n >= 1024) throw new Error("Too many outstanding sign-in challenges");
@@ -137,7 +144,7 @@ export function verifyCustomerChallenge(origin: URL, challengeId: string, signat
 }> {
   if (!hex32.test(challengeId) || !signaturePattern.test(signature)) throw new InvalidCustomerChallenge("Invalid challenge or signature");
   const now = Math.floor(Date.now() / 1000);
-  return withDatabase(db => {
+  return withCustomerDatabase(db => {
     const challenge = db.prepare("SELECT owner_address, origin, message, expires_at, consumed_at FROM customer_challenges WHERE id = ?")
       .get(challengeId) as { owner_address: string; origin: string; message: string; expires_at: number; consumed_at: number | null } | undefined;
     if (!challenge || challenge.origin !== origin.origin || challenge.consumed_at !== null || challenge.expires_at <= now) {
@@ -172,7 +179,7 @@ export function getCustomerSession(origin: URL, token: string | undefined): Cust
   if (!token || !hex64.test(token)) return null;
   const hash = createHash("sha256").update(token).digest("hex");
   const now = Math.floor(Date.now() / 1000);
-  return withDatabase(db => {
+  return withCustomerDatabase(db => {
     const row = db.prepare("SELECT session_id, owner_address, expires_at FROM customer_sessions WHERE token_hash = ? AND origin = ? AND revoked_at IS NULL AND expires_at > ?")
       .get(hash, origin.origin, now) as { session_id: string; owner_address: string; expires_at: number } | undefined;
     return row ? { sessionId: row.session_id, ownerAddress: row.owner_address, expiresAt: row.expires_at } : null;
@@ -182,7 +189,7 @@ export function getCustomerSession(origin: URL, token: string | undefined): Cust
 export function revokeCustomerSession(origin: URL, token: string | undefined): void {
   if (!token || !hex64.test(token)) return;
   const hash = createHash("sha256").update(token).digest("hex");
-  withDatabase(db => db.prepare("UPDATE customer_sessions SET revoked_at = ? WHERE token_hash = ? AND origin = ? AND revoked_at IS NULL")
+  withCustomerDatabase(db => db.prepare("UPDATE customer_sessions SET revoked_at = ? WHERE token_hash = ? AND origin = ? AND revoked_at IS NULL")
     .run(Math.floor(Date.now() / 1000), hash, origin.origin));
 }
 

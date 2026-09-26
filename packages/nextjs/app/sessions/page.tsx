@@ -6,6 +6,8 @@ import { ModeSFramer } from "@neuron/hedera";
 type Counts = { bytes: number; chunks: number; valid: number; invalid: number; aircraft: number };
 type Ticket = { url: string; sellerAccount: string; ticket: string };
 type CustomerSession = { sessionId: string; ownerAddress: string; expiresAt: number };
+type SellerRequest = { id: string; state: "reserved" | "submitting" | "uncertain" | "confirmed";
+  sellerAccount: string; transactionId: string | null; payloadSha256: string | null; topicSequence: number | null };
 type WalletProvider = { request(args: { method: string; params?: unknown[] }): Promise<unknown> };
 const emptyCounts = (): Counts => ({ bytes: 0, chunks: 0, valid: 0, invalid: 0, aircraft: 0 });
 
@@ -23,6 +25,22 @@ export default function SessionsPage() {
   const [auth, setAuth] = useState<"checking" | "disabled" | "required" | "signedIn" | "unavailable">("checking");
   const [authSession, setAuthSession] = useState<CustomerSession | null>(null);
   const [authMessage, setAuthMessage] = useState("");
+  const [requestEnabled, setRequestEnabled] = useState(false);
+  const [sellerRequest, setSellerRequest] = useState<SellerRequest | null>(null);
+  const [requestMessage, setRequestMessage] = useState("");
+  const [requestBusy, setRequestBusy] = useState(false);
+  const [connected, setConnected] = useState(false);
+
+  async function refreshRequest() {
+    try {
+      const response = await fetch("/api/customer-request", { cache: "no-store" });
+      if (response.status === 404) { setRequestEnabled(false); return; }
+      if (!response.ok) throw new Error("Seller request status is unavailable");
+      const body = await response.json() as { request?: SellerRequest | null };
+      setRequestEnabled(true);
+      setSellerRequest(body.request ?? null);
+    } catch { setRequestMessage("Seller request status is unavailable"); }
+  }
 
   useEffect(() => {
     let active = true;
@@ -35,6 +53,7 @@ export default function SessionsPage() {
       if (active && typeof session.ownerAddress === "string" && typeof session.sessionId === "string") {
         setAuthSession(session);
         setAuth("signedIn");
+        void refreshRequest();
       } else if (active) setAuth("unavailable");
     }).catch(() => { if (active) setAuth("unavailable"); });
     return () => { active = false; };
@@ -65,6 +84,7 @@ export default function SessionsPage() {
     lastByteAt.current = 0;
     openedAt.current = 0;
     setSeller(null);
+    setConnected(false);
     setStatus("Stopped");
   }
 
@@ -100,6 +120,7 @@ export default function SessionsPage() {
       setAuthSession(session);
       setAuth("signedIn");
       setAuthMessage("Signed in. No payment was authorized.");
+      void refreshRequest();
     } catch (error) {
       setAuthMessage(error instanceof Error ? error.message : "Wallet sign-in failed");
     }
@@ -113,6 +134,9 @@ export default function SessionsPage() {
       setAuthSession(null);
       setAuth("required");
       setAuthMessage("Signed out");
+      setRequestEnabled(false);
+      setSellerRequest(null);
+      setRequestMessage("");
     } catch {
       setAuthMessage("Could not sign out. Retry before leaving this browser.");
     }
@@ -143,6 +167,7 @@ export default function SessionsPage() {
       socket.onopen = () => {
         if (current === generation.current) {
           openedAt.current = Date.now();
+          setConnected(true);
           setStatus("Waiting for seller bytes");
         }
       };
@@ -166,7 +191,7 @@ export default function SessionsPage() {
         } catch { socket.close(1009, "binary chunk limit exceeded"); }
       };
       socket.onclose = () => {
-        if (current === generation.current) { connection.current = null; setStatus("Disconnected"); }
+        if (current === generation.current) { connection.current = null; setConnected(false); setStatus("Disconnected"); }
       };
       socket.onerror = () => { if (current === generation.current) setStatus("Connection error"); };
     } catch (error) {
@@ -174,13 +199,32 @@ export default function SessionsPage() {
     }
   }
 
+  async function requestSellerData() {
+    if (!connected || !requestEnabled || requestBusy) return;
+    setRequestBusy(true);
+    setRequestMessage("Submitting a testnet HCS service request. Keep this page open.");
+    try {
+      const response = await fetch("/api/customer-request", { method: "POST", cache: "no-store" });
+      const body = await response.json() as { request?: SellerRequest; error?: string };
+      if (!response.ok) throw new Error(body.error ?? "Seller request failed");
+      if (!body.request) throw new Error("Seller request response was malformed");
+      setSellerRequest(body.request);
+      setRequestMessage(body.request.state === "confirmed" ?
+        "HCS request confirmed. Waiting for seller bytes does not prove delivery." :
+        "Request outcome needs operator reconciliation.");
+    } catch (error) {
+      setRequestMessage(error instanceof Error ? error.message : "Seller request failed");
+      await refreshRequest();
+    } finally { setRequestBusy(false); }
+  }
+
   return <section>
     <p className="eyebrow">Testnet stream</p>
     <h1>Watch seller data arrive</h1>
     <p>This view reads binary bytes from the configured legacy gateway. The gateway checks the seller&apos;s on-chain key. Valid Mode-S frames are counted only after CRC verification. The legacy stream is not a signed Agent Card or proof of physical sensor origin.</p>
-    <p className="notice">This test view does not request a service, sign an invoice, pay a seller, or confirm a purchase. Start the testnet gateway and seller request separately before connecting.</p>
+    <p className="notice">This test view can submit a legacy service request on testnet when an operator explicitly enables it. The request does not sign an invoice, pay a seller, or confirm a purchase. Start the testnet gateway before connecting.</p>
     {auth === "required" && <p>Sign in with a Hedera testnet EVM wallet. This authenticates your browser for one hour; the signature does not authorize a payment.</p>}
-    {auth === "signedIn" && authSession && <p>Signed in as <span className="mono">{authSession.ownerAddress}</span>. This test connection still depends on an operator-started seller request.</p>}
+    {auth === "signedIn" && authSession && <p>Signed in as <span className="mono">{authSession.ownerAddress}</span>.</p>}
     {auth === "unavailable" && <p className="notice">Customer sign-in is unavailable. Live data cannot be connected from this browser.</p>}
     {auth === "required" && <button type="button" className="secondary" onClick={signIn}>Sign in with wallet</button>}
     {auth === "signedIn" && <button type="button" className="secondary" onClick={signOut}>Sign out</button>}
@@ -188,7 +232,16 @@ export default function SessionsPage() {
     <div className="actions">
       <button type="button" onClick={connect}>Connect</button>
       <button type="button" className="secondary" onClick={stop}>Stop</button>
+      {auth === "signedIn" && requestEnabled && <button type="button" className="secondary"
+        onClick={requestSellerData} disabled={!connected || requestBusy || Boolean(sellerRequest)}>
+        {requestBusy ? "Submitting request" : "Request seller data"}
+      </button>}
     </div>
+    {requestMessage && <p role="status" aria-live="polite">{requestMessage}</p>}
+    {sellerRequest && <p>Testnet HCS request: {sellerRequest.state}
+      {sellerRequest.transactionId && <> · <span className="mono">{sellerRequest.transactionId}</span></>}
+      {sellerRequest.topicSequence && <> · topic sequence {sellerRequest.topicSequence}</>}
+    </p>}
     <p role="status" aria-live="polite">Status: {status}</p>
     {seller && <p>Legacy seller account: <span className="mono">{seller}</span></p>}
     <dl className="details">
