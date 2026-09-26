@@ -39,8 +39,10 @@ type ticketDetails struct {
 }
 
 type subscriber struct {
-	frames  chan []byte
-	failure chan struct{}
+	frames    chan []byte
+	failure   chan struct{}
+	sessionID string
+	owner     string
 }
 
 type gateway struct {
@@ -180,7 +182,7 @@ func (g *gateway) serveStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session token rejected", http.StatusUnauthorized)
 		return
 	}
-	sub := &subscriber{frames: make(chan []byte, 64), failure: make(chan struct{}, 1)}
+	sub := &subscriber{frames: make(chan []byte, 64), failure: make(chan struct{}, 1), sessionID: identity.sessionID, owner: identity.owner}
 	g.subscriber = sub
 	g.mu.Unlock()
 	accepted := false
@@ -264,6 +266,37 @@ func (g *gateway) serveHealth(w http.ResponseWriter, r *http.Request) {
 	g.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(response)
+}
+
+func (g *gateway) serveSessionCheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method rejected", http.StatusMethodNotAllowed)
+		return
+	}
+	sessionID := r.Header.Get("X-Neuron-Session-ID")
+	owner := r.Header.Get("X-Neuron-Owner")
+	if !ticketHex32.MatchString(sessionID) || !strings.HasPrefix(owner, "0x") || !ticketHex40.MatchString(strings.TrimPrefix(owner, "0x")) {
+		http.Error(w, "session check rejected", http.StatusUnauthorized)
+		return
+	}
+	signature, err := hex.DecodeString(r.Header.Get("X-Neuron-Auth"))
+	if err != nil || len(signature) != sha256.Size {
+		http.Error(w, "session check rejected", http.StatusUnauthorized)
+		return
+	}
+	mac := hmac.New(sha256.New, g.secret)
+	_, _ = io.WriteString(mac, "session-check:"+sessionID+":"+owner+":"+g.sellerAccount)
+	if !hmac.Equal(signature, mac.Sum(nil)) {
+		http.Error(w, "session check rejected", http.StatusUnauthorized)
+		return
+	}
+	g.mu.Lock()
+	connected := g.subscriber != nil && g.subscriber.sessionID == sessionID && g.subscriber.owner == owner
+	g.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(struct {
+		Connected bool `json:"connected"`
+	}{Connected: connected})
 }
 
 func getSellerPublicKey(id string) (string, error) {
@@ -384,6 +417,7 @@ func run() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/stream", g.serveStream)
 	mux.HandleFunc("/health", g.serveHealth)
+	mux.HandleFunc("/session-check", g.serveSessionCheck)
 	server := &http.Server{Addr: listen, Handler: mux, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
 	listener, err := net.Listen("tcp", listen)
 	if err != nil {
