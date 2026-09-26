@@ -43,6 +43,7 @@ type gateway struct {
 	token         string
 	secret        []byte
 	instanceID    string
+	journal       *sessionJournal
 	usedTickets   map[string]int64
 	bytes         uint64
 	chunks        uint64
@@ -173,6 +174,29 @@ func (g *gateway) serveStream(w http.ResponseWriter, r *http.Request) {
 	}
 	accepted = true
 	defer conn.Close(websocket.StatusNormalClosure, "session ended")
+	connectionID := ""
+	if ticket != "" {
+		connectionID = strings.Split(ticket, ".")[3]
+	} else {
+		idBytes := make([]byte, 16)
+		if _, err := rand.Read(idBytes); err != nil {
+			_ = conn.Close(websocket.StatusInternalError, "cannot create connection ID")
+			return
+		}
+		connectionID = hex.EncodeToString(idBytes)
+	}
+	var sentBytes uint64
+	if g.journal != nil {
+		if err := g.journal.record("opened", connectionID, 0); err != nil {
+			_ = conn.Close(websocket.StatusInternalError, "session journal unavailable")
+			return
+		}
+		defer func() {
+			if err := g.journal.record("closed", connectionID, sentBytes); err != nil {
+				fmt.Fprintf(os.Stderr, "session journal close failed: %v\n", err)
+			}
+		}()
+	}
 	ctx := conn.CloseRead(r.Context())
 	for {
 		select {
@@ -188,6 +212,7 @@ func (g *gateway) serveStream(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return
 			}
+			sentBytes += uint64(len(chunk))
 		}
 	}
 }
@@ -314,6 +339,17 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	g := &gateway{sellerAccount: sellerID, origin: origin, token: token, secret: secret, instanceID: hex.EncodeToString(instanceBytes)}
+	journalPath := os.Getenv("NEURON_SESSION_JOURNAL_FILE")
+	if journalPath == "" && !loopback {
+		return errors.New("non-loopback gateway requires NEURON_SESSION_JOURNAL_FILE")
+	}
+	if journalPath != "" {
+		g.journal, err = openSessionJournal(journalPath, sellerID, g.instanceID)
+		if err != nil {
+			return err
+		}
+		defer g.journal.Close()
+	}
 	receiver, err := legacy.NewReceiver(ctx, p2pKey, sellerKey, uint16(portValue), g.onBytes)
 	if err != nil {
 		return err

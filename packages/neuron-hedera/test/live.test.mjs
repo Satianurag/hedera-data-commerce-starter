@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import { checkLegacyDeviceBinding, getLatestTopicMessage, getMirrorAccount, inspectSignedTopicEnvelope, listLegacyDevices, networkConfigFromEnv } from "../dist/index.js";
+import { checkLegacyDeviceBinding, getLatestTopicMessage, getTopicMessageBySequence, getMirrorAccount, inspectSignedTopicEnvelope, listLegacyDevices, networkConfigFromEnv } from "../dist/index.js";
 import { mirrorJson } from "../dist/mirror.js";
 
 test("live legacy seller account key and HCS topics agree with testnet Mirror", async () => {
@@ -25,6 +25,8 @@ test("real multi-chunk HCS message is reassembled exactly", async () => {
   assert.equal(latest.bytes.length, 2048);
   assert.equal(createHash("sha256").update(latest.bytes).digest("hex"),
     "412cd07cc67304a23c0cfc2212c551490daacf9b76dfe053cfed7dd2b05de2d7");
+  const selected = await getTopicMessageBySequence(config, "0.0.10713754", latest.sequenceNumber);
+  assert.deepEqual(selected.bytes, latest.bytes);
 });
 
 test("controlled signed TopicMessage matches testnet Mirror payer key", async () => {
