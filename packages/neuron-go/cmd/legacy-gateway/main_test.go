@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -271,7 +273,37 @@ func TestCustomerTicketWebSocketCarriesBytesAndJournalsOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer journal.Close()
-	g := &gateway{origin: "http://localhost:3000", sellerAccount: seller, secret: secret, instanceID: instanceID, journal: journal}
+	var active atomic.Bool
+	active.Store(true)
+	checkServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/gateway-session" || r.ContentLength != 0 ||
+			r.Header.Get("X-Neuron-Session-ID") != testSession || r.Header.Get("X-Neuron-Owner") != testOwner ||
+			r.Header.Get("X-Neuron-Instance-ID") != instanceID {
+			http.Error(w, "bad request", http.StatusUnauthorized)
+			return
+		}
+		timestamp := r.Header.Get("X-Neuron-Timestamp")
+		nonce := r.Header.Get("X-Neuron-Nonce")
+		if _, err := strconv.ParseInt(timestamp, 10, 64); err != nil {
+			http.Error(w, "bad timestamp", http.StatusUnauthorized)
+			return
+		}
+		if !ticketHex32.MatchString(nonce) {
+			http.Error(w, "bad nonce", http.StatusUnauthorized)
+			return
+		}
+		checkMAC := hmac.New(sha256.New, secret)
+		_, _ = checkMAC.Write([]byte("session-live:" + instanceID + ":" + timestamp + ":" + nonce + ":" + testSession + ":" + testOwner))
+		if r.Header.Get("X-Neuron-Auth") != hex.EncodeToString(checkMAC.Sum(nil)) {
+			http.Error(w, "bad auth", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		writeSignedSessionCheckResponse(w, r, secret, instanceID, active.Load())
+	}))
+	defer checkServer.Close()
+	g := &gateway{origin: "http://localhost:3000", sellerAccount: seller, secret: secret, instanceID: instanceID,
+		journal: journal, sessionCheckURL: checkServer.URL + "/api/gateway-session", sessionCheckHTTP: newSessionCheckClient()}
 	server := httptest.NewServer(http.HandlerFunc(g.serveStream))
 	defer server.Close()
 	streamURL, err := url.Parse(server.URL)
@@ -296,7 +328,12 @@ func TestCustomerTicketWebSocketCarriesBytesAndJournalsOwner(t *testing.T) {
 	if err != nil || messageType != websocket.MessageBinary || string(received) != string(data) {
 		t.Fatalf("binary WebSocket payload changed: type=%v bytes=%x err=%v", messageType, received, err)
 	}
-	_ = conn.Close(websocket.StatusNormalClosure, "test complete")
+	active.Store(false)
+	readCtx, stopRead := context.WithTimeout(context.Background(), 5*time.Second)
+	defer stopRead()
+	if _, _, err := conn.Read(readCtx); err == nil {
+		t.Fatalf("revoked customer WebSocket remained open: %v", err)
+	}
 	for attempt := 0; attempt < 30; attempt++ {
 		events := readJournalEvents(t, journalPath)
 		if len(events) == 2 {
@@ -310,4 +347,129 @@ func TestCustomerTicketWebSocketCarriesBytesAndJournalsOwner(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("customer connection did not close durably")
+}
+
+func TestCustomerSessionCheckFailsClosedBeforeTicketConsumption(t *testing.T) {
+	secret := []byte("01234567890123456789012345678901")
+	instanceID := "0123456789abcdef0123456789abcdef"
+	seller := "0.0.4318411"
+	nonce := "00112233445566778899aabbccddeeff"
+	expiry := strconv.FormatInt(time.Now().Unix()+45, 10)
+	ownerHex := "1234567890123456789012345678901234567890"
+	mac := hmac.New(sha256.New, secret)
+	_, _ = mac.Write([]byte("v2:" + expiry + ":" + nonce + ":" + testSession + ":" + ownerHex + ":" + seller + ":" + instanceID))
+	ticket := "auth.v2." + expiry + "." + nonce + "." + testSession + "." + ownerHex + "." + hex.EncodeToString(mac.Sum(nil))
+	g := &gateway{origin: "http://localhost:3000", sellerAccount: seller, secret: secret, instanceID: instanceID}
+	request := func() *http.Request {
+		r := httptest.NewRequest(http.MethodGet, "http://localhost:9080/stream", nil)
+		r.Header.Set("Origin", g.origin)
+		r.Header.Set("Sec-WebSocket-Protocol", "neuron.v1, "+ticket)
+		return r
+	}
+	response := httptest.NewRecorder()
+	g.serveStream(response, request())
+	if response.Code != http.StatusUnauthorized || len(g.usedTickets) != 0 {
+		t.Fatalf("missing app check did not fail closed before consumption: HTTP %d tickets=%d", response.Code, len(g.usedTickets))
+	}
+	checkServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		writeSignedSessionCheckResponse(w, r, secret, instanceID, false)
+	}))
+	defer checkServer.Close()
+	g.sessionCheckURL = checkServer.URL + "/api/gateway-session"
+	g.sessionCheckHTTP = newSessionCheckClient()
+	response = httptest.NewRecorder()
+	g.serveStream(response, request())
+	if response.Code != http.StatusUnauthorized || len(g.usedTickets) != 0 {
+		t.Fatalf("inactive app session consumed ticket: HTTP %d tickets=%d", response.Code, len(g.usedTickets))
+	}
+}
+
+func TestSessionCheckURLAndResponseRestrictions(t *testing.T) {
+	for _, candidate := range []string{
+		"http://127.0.0.1:3000/api/gateway-session", "http://[::1]:3000/api/gateway-session",
+	} {
+		if err := validateSessionCheckURL(candidate); err != nil {
+			t.Fatalf("valid loopback URL rejected: %q: %v", candidate, err)
+		}
+	}
+	for _, candidate := range []string{
+		"http://localhost:3000/api/gateway-session", "http://127.0.0.2:3000/other",
+		"https://127.0.0.1:3000/api/gateway-session", "http://127.0.0.1:3000/api/gateway-session?x=1",
+		"http://127.0.0.1:3000/api/gateway-session#fragment", "http://user@127.0.0.1:3000/api/gateway-session",
+		"http://example.com:3000/api/gateway-session", "http://127.0.0.1/api/gateway-session",
+	} {
+		if err := validateSessionCheckURL(candidate); err == nil {
+			t.Fatalf("unsafe session check URL accepted: %q", candidate)
+		}
+	}
+	instanceID := "0123456789abcdef0123456789abcdef"
+	identity := ticketDetails{sessionID: testSession, owner: testOwner}
+	secret := []byte("01234567890123456789012345678901")
+	var replayedResponse string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.RawQuery {
+		case "redirect":
+			http.Redirect(w, r, "http://example.com/", http.StatusFound)
+		case "oversize":
+			writeSignedSessionCheckResponse(w, r, secret, instanceID, true)
+			_, _ = w.Write([]byte(strings.Repeat(" ", 1025)))
+		case "wrong-instance":
+			writeSignedSessionCheckResponse(w, r, secret, "other", true)
+		case "unavailable":
+			http.Error(w, "database unavailable", http.StatusServiceUnavailable)
+		case "unsigned":
+			_, _ = w.Write([]byte(`{"active":true,"instanceId":"` + instanceID + `","nonce":"` + r.Header.Get("X-Neuron-Nonce") + `"}`))
+		case "forged-active":
+			response := httptest.NewRecorder()
+			writeSignedSessionCheckResponse(response, r, secret, instanceID, false)
+			_, _ = w.Write([]byte(strings.Replace(response.Body.String(), `"active":false`, `"active":true`, 1)))
+		case "capture":
+			response := httptest.NewRecorder()
+			writeSignedSessionCheckResponse(response, r, secret, instanceID, true)
+			replayedResponse = response.Body.String()
+			_, _ = w.Write([]byte(replayedResponse))
+		case "replayed":
+			_, _ = w.Write([]byte(replayedResponse))
+		default:
+			writeSignedSessionCheckResponse(w, r, secret, instanceID, true)
+		}
+	}))
+	defer server.Close()
+	g := &gateway{secret: secret, instanceID: instanceID,
+		sessionCheckURL: server.URL + "/api/gateway-session", sessionCheckHTTP: newSessionCheckClient()}
+	if !g.customerSessionActive(context.Background(), identity) {
+		t.Fatal("valid active app response rejected")
+	}
+	for _, query := range []string{"redirect", "oversize", "wrong-instance", "unavailable", "unsigned", "forged-active"} {
+		g.sessionCheckURL = server.URL + "/api/gateway-session?" + query
+		if g.customerSessionActive(context.Background(), identity) {
+			t.Fatalf("unsafe app response accepted: %s", query)
+		}
+	}
+	g.sessionCheckURL = server.URL + "/api/gateway-session?capture"
+	if !g.customerSessionActive(context.Background(), identity) {
+		t.Fatal("signed capture response was rejected")
+	}
+	g.sessionCheckURL = server.URL + "/api/gateway-session?replayed"
+	if g.customerSessionActive(context.Background(), identity) {
+		t.Fatal("replayed signed response was accepted for a new nonce")
+	}
+}
+
+func writeSignedSessionCheckResponse(w http.ResponseWriter, r *http.Request, secret []byte, instanceID string, active bool) {
+	bit := "0"
+	if active {
+		bit = "1"
+	}
+	nonce := r.Header.Get("X-Neuron-Nonce")
+	proofMAC := hmac.New(sha256.New, secret)
+	_, _ = proofMAC.Write([]byte("session-live-response:" + instanceID + ":" + r.Header.Get("X-Neuron-Timestamp") + ":" + nonce + ":" +
+		r.Header.Get("X-Neuron-Session-ID") + ":" + r.Header.Get("X-Neuron-Owner") + ":" + bit))
+	_ = json.NewEncoder(w).Encode(struct {
+		Active     bool   `json:"active"`
+		InstanceID string `json:"instanceId"`
+		Nonce      string `json:"nonce"`
+		Proof      string `json:"proof"`
+	}{active, instanceID, nonce, hex.EncodeToString(proofMAC.Sum(nil))})
 }
