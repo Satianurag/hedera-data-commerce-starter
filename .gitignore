@@ -9,3 +9,12 @@ artifacts/
 cache/
 out/
 *.tsbuildinfo
+*.pem
+*.key
+*.der
+*.p12
+*.jks
+id_ed25519
+id_rsa
+.oci/
+.ssh/
