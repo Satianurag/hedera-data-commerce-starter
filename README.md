@@ -58,7 +58,7 @@ HEDERA_MAX_FEE_TINYBAR="$MAX_FEE_TINYBAR" \
 npm run hcs:submit < "$MESSAGE_FILE"
 ```
 
-The command prints a JSON result only after `SUCCESS` and Mirror confirmation. Keep the transaction ID printed on standard error if Mirror indexing times out, since consensus may already have succeeded. Mainnet writing additionally requires `HEDERA_ALLOW_MAINNET_WRITES=true`; no mainnet submission or deployment has been performed. Run `go test ./...`, `go vet ./...` and `go run golang.org/x/vuln/cmd/govulncheck@latest ./...` inside `packages/neuron-go` to check its separate Go dependency graph.
+The command prints the preassigned transaction ID and payload hash before submission. It returns JSON only after Mirror confirms the exact bytes and payer; `receiptStatus` is `SUCCESS` when the consensus receipt was obtained, or `UNKNOWN` if Mirror confirmed an execution whose receipt was unavailable. If submission or Mirror confirmation fails, reconcile the printed ID before retrying because the transaction may already have succeeded. Mainnet writing additionally requires `HEDERA_ALLOW_MAINNET_WRITES=true`; no mainnet submission or deployment has been performed. Run `go test ./...`, `go vet ./...` and `go run golang.org/x/vuln/cmd/govulncheck@latest ./...` inside `packages/neuron-go` to check its separate Go dependency graph.
 
 ## Deploy and exercise the native-HBAR escrow
 
@@ -73,7 +73,7 @@ HEDERA_CONTRACT_GAS="$GAS_LIMIT" \
 npm run contract:deploy
 ```
 
-The opt-in `npm run test:live -w @neuron/foundry` needs `HEDERA_NETWORK=testnet`, `HEDERA_CONTRACT_ID`, `HEDERA_CONTRACT_ADDRESS`, `HEDERA_BUYER_ACCOUNT_ID`, `HEDERA_BUYER_KEY_FILE`, `HEDERA_SELLER_ACCOUNT_ID`, `HEDERA_SELLER_KEY_FILE`, and `HEDERA_MAX_FEE_TINYBAR`. It spends testnet HBAR: 0.1 HBAR each for one buyer-approved seller withdrawal, one unapproved timeout refund, and one approved but unclaimed timeout refund, plus transaction fees. It checks RPC receipts, Mirror results, tinybar conversion, final states and zero contract balance. The [dated evidence](docs/testnet-evidence-2026-09-26.md) records the completed run. Use only the revised testnet contract `0.0.10725749`; the first deployed version had an approved-funds lockup and is superseded. Mainnet deployment requires separate credentials and `HEDERA_ALLOW_MAINNET_WRITES=true`; none has been attempted.
+The opt-in `npm run test:live -w @neuron/foundry` needs `HEDERA_NETWORK=testnet`, `HEDERA_CONTRACT_ID`, `HEDERA_CONTRACT_ADDRESS`, `HEDERA_BUYER_ACCOUNT_ID`, `HEDERA_BUYER_KEY_FILE`, `HEDERA_SELLER_ACCOUNT_ID`, `HEDERA_SELLER_KEY_FILE`, `HEDERA_MAX_FEE_TINYBAR`, and an absolute `HEDERA_TEST_JOURNAL_FILE` path to an owner-only file outside the repository. It writes each submitted transaction hash to that journal before waiting for confirmation and obtains each escrow ID from its own `Funded` event. It spends testnet HBAR: 0.1 HBAR each for one buyer-approved seller withdrawal, one unapproved timeout refund, and one approved but unclaimed timeout refund, plus transaction fees. It checks RPC receipts, Mirror results, tinybar conversion, final states and zero contract balance. The [dated evidence](docs/testnet-evidence-2026-09-26.md) records the completed run. Use only the revised testnet contract `0.0.10725749`; the first deployed version had an approved-funds lockup and is superseded. Mainnet deployment requires separate credentials and `HEDERA_ALLOW_MAINNET_WRITES=true`; none has been attempted.
 
 ## Trust labels
 

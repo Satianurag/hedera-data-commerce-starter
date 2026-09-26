@@ -1,5 +1,5 @@
 import { createPublicKey } from "node:crypto";
-import { getMirrorAccount, getMirrorTopic } from "./mirror.js";
+import { getMirrorAccount, getMirrorTopic, readJsonLimited } from "./mirror.js";
 import { assertHederaId, assertNetworkConfig, type NetworkConfig } from "./network.js";
 
 export type LegacyDevice = Readonly<{
@@ -56,8 +56,9 @@ export async function listLegacyDevices(config: NetworkConfig): Promise<LegacyDe
     redirect: "error",
   });
   if (!response.ok) throw new Error(`Legacy directory returned ${response.status}`);
-  const data: unknown = await response.json();
+  const data: unknown = await readJsonLimited(response);
   if (!Array.isArray(data)) throw new Error("Legacy directory response is not an array");
+  if (data.length > 1000) throw new Error("Legacy directory exceeds 1000 device records");
   return data.map(parseDevice);
 }
 

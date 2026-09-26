@@ -238,26 +238,43 @@ func run() error {
 	}
 	defer client.Close()
 	client.SetOperator(accountID, c.key)
+	transactionID := hedera.TransactionIDGenerate(accountID)
+	digest := sha256.Sum256(payload)
+	fmt.Fprintf(os.Stderr, "submitting HCS transaction %s, SHA-256 %x; reconcile this ID before any retry if the outcome is uncertain\n", transactionID, digest)
 	response, err := hedera.NewTopicMessageSubmitTransaction().
 		SetTopicID(topicID).
 		SetMessage(payload).
 		SetMaxTransactionFee(c.maxFee).
+		SetTransactionID(transactionID).
 		Execute(client)
+	receiptStatus := "UNKNOWN"
+	executeErr := err
 	if err != nil {
-		return fmt.Errorf("HCS submission failed: %w", err)
+		fmt.Fprintf(os.Stderr, "submission returned an error for %s; checking Mirror before reporting the outcome: %v\n", transactionID, err)
+	} else {
+		if response.TransactionID.String() != transactionID.String() {
+			return fmt.Errorf("HCS response transaction ID changed from %s to %s", transactionID, response.TransactionID)
+		}
+		receipt, receiptErr := response.GetReceipt(client)
+		if receiptErr != nil {
+			executeErr = receiptErr
+			fmt.Fprintf(os.Stderr, "receipt unavailable for %s; checking Mirror before reporting the outcome: %v\n", transactionID, receiptErr)
+		} else if receipt.Status != hedera.StatusSuccess {
+			return fmt.Errorf("HCS receipt for %s: status %s", transactionID, receipt.Status)
+		} else {
+			receiptStatus = "SUCCESS"
+			fmt.Fprintf(os.Stderr, "consensus SUCCESS for %s; awaiting Mirror confirmation\n", transactionID)
+		}
 	}
-	receipt, err := response.GetReceipt(client)
-	if err != nil || receipt.Status != hedera.StatusSuccess {
-		return fmt.Errorf("HCS receipt for %s: status %s: %v", response.TransactionID, receipt.Status, err)
-	}
-	fmt.Fprintf(os.Stderr, "consensus SUCCESS for %s; awaiting Mirror confirmation\n", response.TransactionID)
 	confirmCtx, confirmCancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer confirmCancel()
-	message, err := findMirrorMessage(confirmCtx, c, response.TransactionID, payload)
+	message, err := findMirrorMessage(confirmCtx, c, transactionID, payload)
 	if err != nil {
-		return fmt.Errorf("transaction %s: %w", response.TransactionID, err)
+		if executeErr != nil {
+			return fmt.Errorf("HCS outcome unresolved for %s; reconcile this ID before retrying: submission/receipt error: %v; Mirror: %w", transactionID, executeErr, err)
+		}
+		return fmt.Errorf("transaction %s: %w", transactionID, err)
 	}
-	digest := sha256.Sum256(payload)
 	return json.NewEncoder(os.Stdout).Encode(struct {
 		Network            string `json:"network"`
 		TopicID            string `json:"topicId"`
@@ -267,7 +284,7 @@ func run() error {
 		ConsensusTimestamp string `json:"consensusTimestamp"`
 		SHA256             string `json:"sha256"`
 		SequenceNumber     int64  `json:"sequenceNumber"`
-	}{c.network, c.topic, c.account, response.TransactionID.String(), "SUCCESS", message.ConsensusTime, hex.EncodeToString(digest[:]), message.SequenceNumber})
+	}{c.network, c.topic, c.account, transactionID.String(), receiptStatus, message.ConsensusTime, hex.EncodeToString(digest[:]), message.SequenceNumber})
 }
 
 func main() {

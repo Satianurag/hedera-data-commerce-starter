@@ -14,7 +14,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test test/network.test.mjs test/hcs.test.mjs test/frames.test.mjs",
+    "test": "node --test test/network.test.mjs test/hcs.test.mjs test/frames.test.mjs test/legacy.test.mjs",
     "test:live": "node --test test/live.test.mjs"
   }
 }

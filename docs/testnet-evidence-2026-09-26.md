@@ -1,25 +1,25 @@
 # Candidate HCS write evidence — 26 September 2026
 
-The server-only Go HCS command, now at `packages/neuron-go/cmd/hcs-submit`, generated these **testnet** transactions from the current uncommitted working tree. It used a new limited ECDSA signer and a new submit-key topic. The older disclosed testnet buyer credential funded only the new account's initial 1 HBAR; it did not sign either candidate HCS submission. The new private key is outside this repository in a mode 600 file. No mainnet write occurred. The second transaction ran after the writer added account/key/topic matching preflight and compatible security patch updates.
+The server-only Go HCS command at `packages/neuron-go/cmd/hcs-submit` generated these **testnet** transactions during development. It used a new limited ECDSA signer and a new submit-key topic. The older disclosed testnet buyer credential funded only the new account's initial 1 HBAR; it did not sign the candidate HCS submissions. The new private key is outside this repository in a mode 600 file. No mainnet write occurred. The second transaction ran after the writer added account/key/topic matching preflight and compatible security patch updates.
 
 | Field | Observed value |
 |---|---|
 | Network | Hedera testnet |
 | New operator account | [`0.0.10725146`](https://testnet.mirrornode.hedera.com/api/v1/accounts/0.0.10725146) |
 | New controlled topic | [`0.0.10725147`](https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10725147) |
-| Latest HCS transaction | [`0.0.10725146-1790401057-326310173`](https://testnet.mirrornode.hedera.com/api/v1/transactions/0.0.10725146-1790401057-326310173) |
+| Earlier HCS transaction | [`0.0.10725146-1790401057-326310173`](https://testnet.mirrornode.hedera.com/api/v1/transactions/0.0.10725146-1790401057-326310173) |
 | Receipt / Mirror transaction | `SUCCESS` / `CONSENSUSSUBMITMESSAGE`, entity `0.0.10725147` |
 | Topic sequence / consensus time | `2` / `1790401071.054181942` |
 | Payer | `0.0.10725146` |
 | Submitted bytes / SHA-256 | `334` / `1e3905a6ebb15b1162a7ccbf4b43f0aa492b1056e44edb51ac1110aeae4088df` |
 
-The latest 334-byte JSON message identifies schema `neuron-customer-app/evidence/v1` and commits to a live Mirror-read **legacy seller HCS heartbeat**: source topic `0.0.4318417`, seller payer `0.0.4318411`, source sequence `1830196`, source payload SHA-256 `ddedcae8e075770b4d96f259b631b349f00bdaa85780564d377231a2f3bb328a`, observed `2026-09-26T05:37:42.025Z`. It does not claim live data delivery, a verified Agent Card, or a payment. The first candidate HCS transaction was [`0.0.10725146-1790400512-003384058`](https://testnet.mirrornode.hedera.com/api/v1/transactions/0.0.10725146-1790400512-003384058), topic sequence `1`, SHA-256 `9edeb3b5610e0880b7d3ebf95663351b997af2c1138e96e14931f254b5ba5136`.
+The 334-byte JSON message identifies schema `neuron-customer-app/evidence/v1` and commits to a live Mirror-read **legacy seller HCS heartbeat**: source topic `0.0.4318417`, seller payer `0.0.4318411`, source sequence `1830196`, source payload SHA-256 `ddedcae8e075770b4d96f259b631b349f00bdaa85780564d377231a2f3bb328a`, observed `2026-09-26T05:37:42.025Z`. It does not claim live data delivery, a verified Agent Card, or a payment. The first candidate HCS transaction was [`0.0.10725146-1790400512-003384058`](https://testnet.mirrornode.hedera.com/api/v1/transactions/0.0.10725146-1790400512-003384058), topic sequence `1`, SHA-256 `9edeb3b5610e0880b7d3ebf95663351b997af2c1138e96e14931f254b5ba5136`.
 
-For each submission, the Go command obtained a consensus `SUCCESS` receipt and then matched topic, payer, initial transaction ID, raw bytes, sequence and consensus time from Mirror. A separate invocation of the app's TypeScript HCS reader returned the same byte hash and parsed content. A direct Mirror topic read independently decoded to the exact input file bytes. The public [topic message endpoint](https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10725147/messages?limit=2&order=desc) and transaction endpoints allow another reviewer to repeat the check.
+For each submission, the Go command obtained a consensus `SUCCESS` receipt and then matched topic, payer, initial transaction ID, raw bytes, sequence and consensus time from Mirror. A separate invocation of the app's TypeScript HCS reader returned the same byte hash and parsed content. A direct Mirror topic read independently decoded to the exact input file bytes. The public [topic sequence `2`](https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10725147/messages/2) and transaction endpoints allow another reviewer to repeat the check.
 
 Safe failure checks used the same fresh signer and input bytes without submitting: a public seller topic failed because its submit key did not match, a different testnet account failed the operator key check, and the same numeric account/topic IDs under mainnet failed account key preflight. The writer's unit tests also reject missing network selection, mainnet without explicit opt-in, group/world-readable key files, zero fee caps and missing transaction identity. The mainnet check made only Mirror reads; no mainnet transaction was sent.
 
-This is a candidate working-tree proof. It is **not yet** a transaction attributable to a published template commit or a clean Scaffold-HBAR clone. The source heartbeat is control evidence, not sensor data.
+This was an early candidate working-tree proof. It is **not** a transaction attributable to a published template commit or a clean Scaffold-HBAR clone. The source heartbeat is control evidence, not sensor data.
 
 ## Candidate native-HBAR escrow mechanics
 
@@ -79,3 +79,22 @@ Separate fresh copies of that **scaffolded clone** passed `npm ci --engine-stric
 ## Source-revision HCS transaction
 
 After the source, manifest and handoff were committed locally as Git revision `c71e536f71a4d664d80495059f1134d2ea9424b7`, the committed Go HCS writer submitted a **263-byte** `neuron-customer-app/revision/v1` message naming that revision and explicitly limiting its claim to local testnet stream and contract-mechanics tests. The new testnet [transaction `0.0.10725146@1790407185.296063792`](https://testnet.mirrornode.hedera.com/api/v1/transactions/0.0.10725146-1790407185-296063792) returned consensus `SUCCESS`; the independent Mirror transaction lookup reported `CONSENSUSSUBMITMESSAGE` / `SUCCESS` for topic `0.0.10725147`. [Topic sequence `3`](https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10725147/messages/3) independently decoded to payer `0.0.10725146`, the exact revision and SHA-256 `543fc8880fa49670157b4baaff4c1111c911ae001be9e9ed2a7a00ac232c5010`, matching the local input. The earlier disclosed buyer key did not sign this transaction. This ties a real HCS submission to the **local source revision**; publication of the repository and a public CLI clone remain pending.
+
+## Audit fix verification — 26 September 2026
+
+The HCS writer now assigns and prints a transaction ID before execution, so an ambiguous submission can be reconciled before any retry. Its controlled testnet write printed `0.0.10725146@1790409084.484813832` before `Execute`, then returned receipt `SUCCESS` and exact Mirror confirmation. The independent [transaction lookup](https://testnet.mirrornode.hedera.com/api/v1/transactions/0.0.10725146-1790409084-484813832) reports `CONSENSUSSUBMITMESSAGE` / `SUCCESS` for topic `0.0.10725147`; [sequence `4`](https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10725147/messages/4) has that same initial transaction ID, payer `0.0.10725146`, and payload SHA-256 `5f974468a5676cf7af075cb23a3eb599e34ab76e56e0124dd5cd44b9e21add33`. The decoded payload names prior local revision `1fdcfcd52f3e5a1d9862cf42fc61739df481c845` and says `preassigned-id-writer-test`; it is **not** a proof of this later audit-fix revision or a published template.
+
+The escrow integration now prints and journals each submitted hash before waiting for a receipt, obtains the escrow ID from its own confirmed `Funded` event, and checks the event against the intended buyer, seller, tinybar amount, deadline and terms hash. An owner-only journal outside the repository recorded eight transactions and IDs `4`, `5`, `6`. Independent Mirror contract-result lookups returned `SUCCESS` for contract `0.0.10725749` on every row:
+
+| Action | Mirror result |
+|---|---|
+| Fund ID 4 | [SUCCESS](https://testnet.mirrornode.hedera.com/api/v1/contracts/results/0xd754eff34b7bfd28a14318c8cbaa3a402e47de8d9a8e71263a1e637928020391) |
+| Buyer approves ID 4 | [SUCCESS](https://testnet.mirrornode.hedera.com/api/v1/contracts/results/0x0cd4c312360f6bec4bbb0387326a642d2714180cfc23cce771aa511da7377564) |
+| Seller withdraws ID 4 | [SUCCESS](https://testnet.mirrornode.hedera.com/api/v1/contracts/results/0x5f151e53ecbd75443d41c7190c76df0be999d04888837c3ce8552bd6ab9fb3c1) |
+| Fund ID 5 | [SUCCESS](https://testnet.mirrornode.hedera.com/api/v1/contracts/results/0x4ace51c8798e90ffc5a2dae765b6eb8f677836b93f5e0b6f11b6d74126a22b37) |
+| Buyer refunds ID 5 | [SUCCESS](https://testnet.mirrornode.hedera.com/api/v1/contracts/results/0x70f43294b5f9978b04640a03266b24731ab4eed7d0529cdbc6d1a9383d21bb2e) |
+| Fund ID 6 | [SUCCESS](https://testnet.mirrornode.hedera.com/api/v1/contracts/results/0xa26717ca6ef3c38bcb0264448242ce355465bcdc5acc9a443ecef78bda5eabfa) |
+| Buyer approves ID 6 | [SUCCESS](https://testnet.mirrornode.hedera.com/api/v1/contracts/results/0x3204e171ed2f13026e9555846d460bf13eca05444f074c6990474a737102bbff) |
+| Buyer refunds approved ID 6 | [SUCCESS](https://testnet.mirrornode.hedera.com/api/v1/contracts/results/0x78acded54c8a65a09d43a1ca288e3f08351eb40b64a72a82d48f487f8b3697bc) |
+
+The integration checked RPC receipts and on-chain terminal states; a separate RPC read showed **zero contract balance** after all three paths. It used synthetic terms hashes. It still does not prove a seller-signed invoice, delivered service, or app checkout. Clean copies of this source and lockfile passed install, full dependency tree, build, typecheck, lint, **15** TypeScript tests, five Foundry tests and zero-finding npm audit on Node **20.18.3** and **22.23.3** with npm **11.19.0**. Go **1.26.8** tests, vet and `govulncheck` passed with zero reachable vulnerabilities; one unused module-only finding remains. The gateway's rejected-upgrade and busy-subscriber ticket cases passed local tests, and oversized directory responses fail before JSON parsing.
