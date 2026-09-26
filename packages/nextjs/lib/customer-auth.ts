@@ -208,11 +208,28 @@ export function getCustomerSession(origin: URL, token: string | undefined): Cust
   });
 }
 
-export function revokeCustomerSession(origin: URL, token: string | undefined): void {
-  if (!token || !hex64.test(token)) return;
+export function isCustomerSessionActive(origin: URL, sessionId: string, ownerLower: string): boolean {
+  if (!hex32.test(sessionId) || !/^0x[0-9a-f]{40}$/.test(ownerLower)) return false;
+  const now = Math.floor(Date.now() / 1000);
+  return withCustomerDatabase(db => {
+    const row = db.prepare("SELECT owner_address FROM customer_sessions WHERE session_id = ? AND origin = ? AND revoked_at IS NULL AND expires_at > ?")
+      .get(sessionId, origin.origin, now) as { owner_address: string } | undefined;
+    if (!row) return false;
+    try {
+      return getAddress(row.owner_address) === row.owner_address &&
+        row.owner_address.toLowerCase() === ownerLower && customerAccessAllowed(origin, row.owner_address);
+    } catch {
+      return false;
+    }
+  });
+}
+
+export function revokeCustomerSession(origin: URL, token: string | undefined): boolean {
+  if (!token || !hex64.test(token)) return false;
   const hash = createHash("sha256").update(token).digest("hex");
-  withCustomerDatabase(db => db.prepare("UPDATE customer_sessions SET revoked_at = ? WHERE token_hash = ? AND origin = ? AND revoked_at IS NULL")
-    .run(Math.floor(Date.now() / 1000), hash, origin.origin));
+  const now = Math.floor(Date.now() / 1000);
+  return withCustomerDatabase(db => db.prepare("UPDATE customer_sessions SET revoked_at = ? WHERE token_hash = ? AND origin = ? AND revoked_at IS NULL AND expires_at > ?")
+    .run(now, hash, origin.origin, now).changes === 1);
 }
 
 export function customerCookieName(origin: URL): string {

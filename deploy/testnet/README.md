@@ -52,6 +52,7 @@ Write both environment files as root or the dedicated service user with a restri
 | `NEURON_APP_ORIGIN` | Exact `https://<public-host>` origin, with no trailing slash |
 | `NEURON_SESSION_TOKEN_FILE` | `/var/lib/neuron-customer-testnet/session-token` |
 | `NEURON_SESSION_JOURNAL_FILE` | `/var/lib/neuron-customer-testnet/gateway-sessions.jsonl` |
+| `NEURON_GATEWAY_SESSION_CHECK_URL` | `http://127.0.0.1:3000/api/gateway-session` for customer v2 tickets; the gateway fails closed without a live app check |
 
 `app.env` needs the same `HEDERA_NETWORK`, seller account, app origin and session-token path, plus:
 

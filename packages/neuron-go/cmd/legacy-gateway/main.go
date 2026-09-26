@@ -43,6 +43,7 @@ type ticketDetails struct {
 type subscriber struct {
 	frames    chan []byte
 	failure   chan struct{}
+	revoked   chan struct{}
 	sessionID string
 	owner     string
 	failed    bool // guarded by gateway.mu
@@ -53,20 +54,22 @@ type sellerStreamState interface {
 }
 
 type gateway struct {
-	mu              sync.Mutex
-	subscriber      *subscriber
-	stream          sellerStreamState
-	sellerAccount   string
-	sellerPublicKey string
-	origin          string
-	token           string
-	secret          []byte
-	instanceID      string
-	journal         *sessionJournal
-	usedTickets     map[string]int64
-	bytes           uint64
-	chunks          uint64
-	lastDataAt      time.Time
+	mu               sync.Mutex
+	subscriber       *subscriber
+	stream           sellerStreamState
+	sellerAccount    string
+	sellerPublicKey  string
+	origin           string
+	token            string
+	secret           []byte
+	instanceID       string
+	sessionCheckURL  string
+	sessionCheckHTTP *http.Client
+	journal          *sessionJournal
+	usedTickets      map[string]int64
+	bytes            uint64
+	chunks           uint64
+	lastDataAt       time.Time
 }
 
 func (g *gateway) validTicket(candidate string, now time.Time) bool {
@@ -161,6 +164,134 @@ func (g *gateway) onBytes(chunk []byte) error {
 	}
 }
 
+// validateSessionCheckURL limits the gateway's authenticated call to a local
+// app endpoint. Numeric loopback addresses avoid DNS and proxy redirection.
+func validateSessionCheckURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "http" || u.User != nil || u.Opaque != "" ||
+		u.Path != "/api/gateway-session" || u.RawPath != "" || u.RawQuery != "" ||
+		u.ForceQuery || u.Fragment != "" || u.String() != raw {
+		return errors.New("NEURON_GATEWAY_SESSION_CHECK_URL must be an exact loopback HTTP /api/gateway-session URL")
+	}
+	ip := net.ParseIP(u.Hostname())
+	port, err := strconv.ParseUint(u.Port(), 10, 16)
+	if ip == nil || !ip.IsLoopback() || err != nil || port == 0 {
+		return errors.New("NEURON_GATEWAY_SESSION_CHECK_URL must use a numeric loopback address and port")
+	}
+	return nil
+}
+
+func (g *gateway) customerSessionActive(ctx context.Context, identity ticketDetails) bool {
+	if g.sessionCheckURL == "" || !ticketHex32.MatchString(g.instanceID) ||
+		!ticketHex32.MatchString(identity.sessionID) || !ownerAddressPattern.MatchString(identity.owner) {
+		return false
+	}
+	nonceBytes := make([]byte, 16)
+	if _, err := rand.Read(nonceBytes); err != nil {
+		return false
+	}
+	nonce := hex.EncodeToString(nonceBytes)
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	mac := hmac.New(sha256.New, g.secret)
+	_, _ = io.WriteString(mac, "session-live:"+g.instanceID+":"+timestamp+":"+nonce+":"+identity.sessionID+":"+identity.owner)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.sessionCheckURL, nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("X-Neuron-Session-ID", identity.sessionID)
+	req.Header.Set("X-Neuron-Owner", identity.owner)
+	req.Header.Set("X-Neuron-Instance-ID", g.instanceID)
+	req.Header.Set("X-Neuron-Timestamp", timestamp)
+	req.Header.Set("X-Neuron-Nonce", nonce)
+	req.Header.Set("X-Neuron-Auth", hex.EncodeToString(mac.Sum(nil)))
+	client := g.sessionCheckHTTP
+	if client == nil {
+		client = newSessionCheckClient()
+	}
+	response, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return false
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, 1025))
+	if err != nil || len(body) > 1024 {
+		return false
+	}
+	var result struct {
+		Active     *bool  `json:"active"`
+		InstanceID string `json:"instanceId"`
+		Nonce      string `json:"nonce"`
+		Proof      string `json:"proof"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(body)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&result); err != nil || result.Active == nil ||
+		result.InstanceID != g.instanceID || result.Nonce != nonce {
+		return false
+	}
+	// A second decode rejects trailing values.
+	var trailing any
+	if decoder.Decode(&trailing) != io.EOF || len(result.Proof) != sha256.Size*2 ||
+		strings.ToLower(result.Proof) != result.Proof {
+		return false
+	}
+	proof, err := hex.DecodeString(result.Proof)
+	if err != nil || len(proof) != sha256.Size {
+		return false
+	}
+	activeBit := "0"
+	if *result.Active {
+		activeBit = "1"
+	}
+	proofMAC := hmac.New(sha256.New, g.secret)
+	_, _ = io.WriteString(proofMAC, "session-live-response:"+g.instanceID+":"+timestamp+":"+nonce+":"+identity.sessionID+":"+identity.owner+":"+activeBit)
+	return hmac.Equal(proof, proofMAC.Sum(nil)) && *result.Active
+}
+
+func newSessionCheckClient() *http.Client {
+	return &http.Client{
+		Timeout:       2 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		Transport:     &http.Transport{Proxy: nil, MaxResponseHeaderBytes: 4096},
+	}
+}
+
+func (g *gateway) watchCustomerSession(ctx context.Context, sub *subscriber, identity ticketDetails, terminate func()) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if g.customerSessionActive(ctx, identity) {
+				continue
+			}
+			if ctx.Err() != nil {
+				return
+			}
+			g.mu.Lock()
+			shouldTerminate := false
+			if g.subscriber == sub && !sub.failed {
+				sub.failed = true
+				shouldTerminate = true
+				select {
+				case sub.revoked <- struct{}{}:
+				default:
+				}
+			}
+			g.mu.Unlock()
+			if shouldTerminate {
+				terminate()
+			}
+			return
+		}
+	}
+}
+
 func (g *gateway) serveStream(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet || r.Header.Get("Origin") != g.origin {
 		http.Error(w, "origin rejected", http.StatusForbidden)
@@ -189,6 +320,10 @@ func (g *gateway) serveStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session token rejected", http.StatusUnauthorized)
 		return
 	}
+	if identity.sessionID != "" && !g.customerSessionActive(r.Context(), identity) {
+		http.Error(w, "customer session unavailable", http.StatusUnauthorized)
+		return
+	}
 	g.mu.Lock()
 	if g.subscriber != nil {
 		g.mu.Unlock()
@@ -200,7 +335,7 @@ func (g *gateway) serveStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session token rejected", http.StatusUnauthorized)
 		return
 	}
-	sub := &subscriber{frames: make(chan []byte, 64), failure: make(chan struct{}, 1), sessionID: identity.sessionID, owner: identity.owner}
+	sub := &subscriber{frames: make(chan []byte, 64), failure: make(chan struct{}, 1), revoked: make(chan struct{}, 1), sessionID: identity.sessionID, owner: identity.owner}
 	g.subscriber = sub
 	g.mu.Unlock()
 	accepted := false
@@ -243,10 +378,26 @@ func (g *gateway) serveStream(w http.ResponseWriter, r *http.Request) {
 			}
 		}()
 	}
-	ctx := conn.CloseRead(r.Context())
+	ctx, stopStream := context.WithCancel(conn.CloseRead(r.Context()))
+	defer stopStream()
+	if identity.sessionID != "" {
+		watchCtx, stopWatch := context.WithCancel(ctx)
+		watchDone := make(chan struct{})
+		go func() {
+			defer close(watchDone)
+			g.watchCustomerSession(watchCtx, sub, identity, func() {
+				stopStream()
+				_ = conn.CloseNow()
+			})
+		}()
+		defer func() { stopWatch(); <-watchDone }()
+	}
 	for {
 		// Prefer the failure signal over queued data once backpressure occurs.
 		select {
+		case <-sub.revoked:
+			_ = conn.Close(websocket.StatusPolicyViolation, "customer session inactive")
+			return
 		case <-sub.failure:
 			_ = conn.Close(websocket.StatusInternalError, "stream backpressure")
 			return
@@ -254,6 +405,9 @@ func (g *gateway) serveStream(w http.ResponseWriter, r *http.Request) {
 		}
 		select {
 		case <-ctx.Done():
+			return
+		case <-sub.revoked:
+			_ = conn.Close(websocket.StatusPolicyViolation, "customer session inactive")
 			return
 		case <-sub.failure:
 			_ = conn.Close(websocket.StatusInternalError, "stream backpressure")
@@ -497,6 +651,13 @@ func run() error {
 	defer stop()
 	g := &gateway{sellerAccount: sellerID, sellerPublicKey: sellerKey, origin: origin,
 		token: token, secret: secret, instanceID: hex.EncodeToString(instanceBytes)}
+	if checkURL := os.Getenv("NEURON_GATEWAY_SESSION_CHECK_URL"); checkURL != "" {
+		if err := validateSessionCheckURL(checkURL); err != nil {
+			return err
+		}
+		g.sessionCheckURL = checkURL
+		g.sessionCheckHTTP = newSessionCheckClient()
+	}
 	journalPath := os.Getenv("NEURON_SESSION_JOURNAL_FILE")
 	if journalPath == "" && !loopback {
 		return errors.New("non-loopback gateway requires NEURON_SESSION_JOURNAL_FILE")
