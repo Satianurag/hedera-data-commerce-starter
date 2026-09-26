@@ -135,7 +135,7 @@ The public template must describe exactly which live data and payment flows pass
 
 **Files:** Next.js discovery/detail/session/evidence routes and server-only Hedera access. **Interface:** UI reads typed state from Tasks 2–5, displaying source/trust, exact network, data freshness, receipt status and reasoned errors. **Checks:** boot with no secrets; routes `/`, `/services`, one service detail, session and evidence load; wallet/server secrets absent from built JS and all HTTP payloads; accessibility, disconnect/retry and empty data. **Pass:** a Web2 tester can understand what was discovered, whether it is verified, whether bytes are arriving and what Hedera confirmed. **Stop:** hidden key use, false payment-ready button, or unqualified “live/verified” badge.
 
-**Current slice:** the service list and detail pages now catch failed live directory or Mirror reads during server rendering and show a retryable, unverified state. A route error boundary also covers later rendering failures. The public scaffold matrix passed; an induced directory outage in the public clone rendered the unverified state on both service routes.
+**Current slice:** the service list and detail pages catch failed live directory or Mirror reads during server rendering and show a retryable, unverified state. A route error boundary covers later rendering failures. The historical public scaffold matrix and induced directory outage passed before the repository became private. The current private commit was then cloned with collaborator access; fresh Node 20/22 installs and tests passed, and zero-secret testnet/mainnet production boots returned 200 for four core routes and 404 for the disabled customer request route. Installed-wallet interaction and accessibility review remain open.
 
 - [ ] Build read-only routes first; connect them to verified session and evidence state.
 - [ ] Exercise empty, loading, disconnected, stale, invalid and successful states.
@@ -184,7 +184,7 @@ The public template must describe exactly which live data and payment flows pass
 |---|---|---|
 | Upstream/source audit | **Yes, as of 25 September 2026** | Audit links, pinned heads and historical live evidence; recheck before execution |
 | Reviewable prebuild spec and plan | **Yes** | This spec/plan pair with scope, files, gates and failure conditions |
-| Candidate app and bounty qualification | **Partial** | Public scaffold and source-linked HCS proof passed; task 2/4/5/6/7 product, identity and documentation checks remain |
+| Candidate app and bounty qualification | **Partial** | Historical public scaffold and source-linked HCS proof passed. The current repository is private at the owner's request, so a new anonymous CLI clone and public bounty submission cannot pass while it remains private; product, identity and documentation checks remain |
 | Public seller app compatibility | **No** | Task 8, including binary-safe browser output and concurrency characterization |
 | Safe live commerce | **No** | Task 9 with signed terms, explicit authorization, execution and recovery |
 | Mainnet support | **No** | Task 10 with its own provisioning, authorization and live evidence |
