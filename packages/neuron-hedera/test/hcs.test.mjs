@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { latestTopicMessageFromRows } from "../dist/hcs.js";
+import { getTopicMessageBySequence, latestTopicMessageFromRows } from "../dist/hcs.js";
+import { networkConfigFromEnv } from "../dist/network.js";
 
 const topicId = "0.0.100";
 const payer = "0.0.200";
@@ -66,4 +67,37 @@ test("incomplete, duplicate and malformed chunks are not accepted", () => {
     row(13, "A", { initial_transaction_id: initialTransactionId, number: 3, total: 2 }),
   ], topicId), /Malformed Mirror chunk/);
   assert.throws(() => latestTopicMessageFromRows([row(14, "A", 0)], topicId), /Malformed Mirror chunk/);
+});
+
+test("exact quote reference reassembles the final chunk across interleaved topic rows", async () => {
+  const first = row(10, "A", { initial_transaction_id: initialTransactionId, number: 1, total: 2 });
+  const second = row(12, "B", { initial_transaction_id: initialTransactionId, number: 2, total: 2 });
+  const previous = globalThis.fetch;
+  globalThis.fetch = async url => {
+    const path = new URL(url).pathname;
+    if (path === `/api/v1/topics/${topicId}`) return Response.json({ topic_id: topicId, deleted: false, submit_key: null });
+    assert.equal(path, `/api/v1/topics/${topicId}/messages`);
+    return Response.json({ messages: [second, row(11, "unrelated", null), first], links: { next: null } });
+  };
+  try {
+    const result = await getTopicMessageBySequence(networkConfigFromEnv({ HEDERA_NETWORK: "testnet" }), topicId, 12);
+    assert.equal(Buffer.from(result.bytes).toString(), "AB");
+    assert.equal(result.sequenceNumber, 12);
+  } finally { globalThis.fetch = previous; }
+});
+
+test("quote reference rejects a missing or nonfinal sequence", async () => {
+  const previous = globalThis.fetch;
+  let messages = [row(10, "A", { initial_transaction_id: initialTransactionId, number: 1, total: 2 })];
+  globalThis.fetch = async url => {
+    const path = new URL(url).pathname;
+    if (path === `/api/v1/topics/${topicId}`) return Response.json({ topic_id: topicId, deleted: false, submit_key: null });
+    return Response.json({ messages, links: { next: null } });
+  };
+  try {
+    const config = networkConfigFromEnv({ HEDERA_NETWORK: "testnet" });
+    await assert.rejects(getTopicMessageBySequence(config, topicId, 10), /not the final chunk/);
+    messages = [row(9, "older", null)];
+    await assert.rejects(getTopicMessageBySequence(config, topicId, 10), /does not exist/);
+  } finally { globalThis.fetch = previous; }
 });

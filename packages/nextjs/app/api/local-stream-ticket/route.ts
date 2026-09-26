@@ -4,12 +4,31 @@ import { readFile, stat } from "node:fs/promises";
 export const runtime = "nodejs";
 
 export async function POST(request: Request): Promise<Response> {
-  if (process.env.HEDERA_NETWORK !== "testnet" || process.env.NEURON_ENABLE_LOCAL_STREAM !== "true") {
-    return Response.json({ error: "Local testnet stream is disabled" }, { status: 404 });
+  const localEnabled = process.env.NEURON_ENABLE_LOCAL_STREAM === "true";
+  const remoteEnabled = process.env.NEURON_ENABLE_REMOTE_STREAM === "true";
+  if (process.env.HEDERA_NETWORK !== "testnet" || (!localEnabled && !remoteEnabled)) {
+    return Response.json({ error: "Testnet stream is disabled" }, { status: 404 });
   }
   const origin = process.env.NEURON_APP_ORIGIN;
-  if (!origin || request.headers.get("origin") !== origin || !/^http:\/\/(?:localhost|127\.0\.0\.1):\d+$/.test(origin)) {
+  let appOrigin: URL;
+  try {
+    if (!origin) throw new Error("Missing app origin");
+    appOrigin = new URL(origin);
+    const localOrigin = appOrigin.protocol === "http:" &&
+      ["localhost", "127.0.0.1"].includes(appOrigin.hostname) && Boolean(appOrigin.port);
+    if (!localOrigin || appOrigin.origin !== origin ||
+        appOrigin.pathname !== "/" || appOrigin.search || appOrigin.hash ||
+        appOrigin.username || appOrigin.password) throw new Error("Invalid app origin");
+  } catch {
+    return Response.json({ error: "App origin is invalid" }, { status: 503 });
+  }
+  if (request.headers.get("origin") !== origin) {
     return Response.json({ error: "Origin rejected" }, { status: 403 });
+  }
+  // This route is a loopback-only test control. A copied Host header is not
+  // authentication, but rejecting mismatched hosts catches public proxy errors.
+  if (request.headers.get("host") !== appOrigin.host || new URL(request.url).host !== appOrigin.host) {
+    return Response.json({ error: "App host rejected" }, { status: 403 });
   }
   const sellerAccount = process.env.NEURON_SELLER_ACCOUNT_ID;
   const gatewayUrl = process.env.NEURON_GATEWAY_WS_URL;
@@ -20,12 +39,17 @@ export async function POST(request: Request): Promise<Response> {
   let url: URL;
   try {
     url = new URL(gatewayUrl);
-    if (url.protocol !== "ws:" || !["127.0.0.1", "localhost"].includes(url.hostname) ||
-        !url.port || url.pathname !== "/stream" || url.search || url.hash || url.username || url.password) {
-      throw new Error("Invalid local gateway URL");
+    const localUrl = localEnabled && url.protocol === "ws:" &&
+      ["127.0.0.1", "localhost"].includes(url.hostname) && Boolean(url.port);
+    const remoteUrl = remoteEnabled && url.protocol === "wss:" && !url.port &&
+      Boolean(process.env.NEURON_GATEWAY_PUBLIC_HOST) &&
+      url.hostname === process.env.NEURON_GATEWAY_PUBLIC_HOST;
+    if ((!localUrl && !remoteUrl) || url.pathname !== "/stream" ||
+        url.search || url.hash || url.username || url.password) {
+      throw new Error("Invalid gateway URL");
     }
   } catch {
-    return Response.json({ error: "Local gateway URL is invalid" }, { status: 503 });
+    return Response.json({ error: "Gateway URL is invalid" }, { status: 503 });
   }
   try {
     const info = await stat(tokenPath);
@@ -33,7 +57,7 @@ export async function POST(request: Request): Promise<Response> {
     const token = (await readFile(tokenPath, "utf8")).trim();
     if (!/^[0-9a-fA-F]{64}$/.test(token)) throw new Error("Session secret is invalid");
     const healthUrl = new URL(url);
-    healthUrl.protocol = "http:";
+    healthUrl.protocol = url.protocol === "wss:" ? "https:" : "http:";
     healthUrl.pathname = "/health";
     const healthResponse = await fetch(healthUrl, { cache: "no-store", redirect: "error", signal: AbortSignal.timeout(3_000) });
     if (!healthResponse.ok) throw new Error("Gateway is unavailable");
@@ -51,6 +75,6 @@ export async function POST(request: Request): Promise<Response> {
       headers: { "Cache-Control": "no-store" },
     });
   } catch {
-    return Response.json({ error: "Local gateway is unavailable or misconfigured" }, { status: 503 });
+    return Response.json({ error: "Gateway is unavailable or misconfigured" }, { status: 503 });
   }
 }

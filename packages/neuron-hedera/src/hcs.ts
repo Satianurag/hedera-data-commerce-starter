@@ -149,3 +149,49 @@ export async function getLatestTopicMessage(config: NetworkConfig, topicId: stri
   }
   throw new Error(`Latest HCS message incomplete within pagination bound on ${config.network}`);
 }
+
+// A quote reference names the final HCS chunk sequence. Earlier chunks can be
+// interleaved with other submissions, so scan a bounded page window backwards.
+export async function getTopicMessageBySequence(
+  config: NetworkConfig, topicId: string, sequenceNumber: number,
+): Promise<TopicMessage> {
+  assertHederaId(topicId, "topicId");
+  if (!Number.isSafeInteger(sequenceNumber) || sequenceNumber < 1) {
+    throw new Error("HCS sequence must be a positive safe integer");
+  }
+  await getMirrorTopic(config, topicId);
+  let path: string | null = `/api/v1/topics/${topicId}/messages?limit=25&order=desc&sequencenumber=lte:${sequenceNumber}`;
+  const rows: unknown[] = [];
+  for (let page = 0; path && page < 5; page++) {
+    const data = await mirrorJson(config, path) as { messages?: unknown; links?: { next?: unknown } };
+    if (!Array.isArray(data.messages) || data.messages.length > 25) {
+      throw new Error("Malformed or oversized Mirror message page");
+    }
+    if (page === 0 && (!data.messages.length ||
+        (data.messages[0] as Partial<MirrorMessage> | null)?.sequence_number !== sequenceNumber)) {
+      throw new Error("Selected HCS sequence does not exist");
+    }
+    if (page === 0 && data.messages.length) {
+      const selected = parseMessage(data.messages[0], topicId);
+      if (selected.chunk_info && selected.chunk_info.number !== selected.chunk_info.total) {
+        throw new Error("Selected HCS sequence is not the final chunk");
+      }
+    }
+    rows.push(...data.messages);
+    const result = latestTopicMessageFromRows(rows, topicId);
+    if (result) {
+      if (result.sequenceNumber !== sequenceNumber) {
+        throw new Error("Selected HCS sequence is not the final chunk");
+      }
+      return result;
+    }
+    const next = data.links?.next;
+    if (next !== null && next !== undefined &&
+        (typeof next !== "string" || !next.startsWith(`/api/v1/topics/${topicId}/messages?`))) {
+      throw new Error("Mirror pagination link escaped the selected topic");
+    }
+    path = typeof next === "string" ? next : null;
+    if (!path) break;
+  }
+  throw new Error("Selected HCS message incomplete within pagination bound");
+}
