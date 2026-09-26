@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ModeSFramer, aircraftStreamStatus, AircraftObservations, type AircraftObservation } from "@neuron/hedera";
+import { selectedSeller, assertSelectedSeller } from "./selection";
 import { InjectedWalletPicker } from "../wallet/picker";
 import { selectedInjectedWallet, subscribeWalletInvalidation, type WalletProvider } from "../wallet/injected";
 
@@ -353,6 +354,8 @@ export default function SessionsPage() {
     const current = generation.current;
     setStatus("Checking testnet gateway");
     try {
+      const requestedSeller = selectedSeller(window.location.search);
+      if (requestedSeller) setSeller(requestedSeller);
       if (auth === "signedIn") await ensureMatchingSession();
       if (current !== generation.current) return;
       const response = await fetch("/api/local-stream-ticket", { method: "POST", cache: "no-store" });
@@ -363,6 +366,7 @@ export default function SessionsPage() {
         throw new Error("Gateway ticket was malformed");
       }
       if (current !== generation.current) return;
+      assertSelectedSeller(requestedSeller, ticket.sellerAccount);
       const socket = new WebSocket(ticket.url, ["neuron.v1", ticket.ticket]);
       socket.binaryType = "arraybuffer";
       connection.current = socket;
