@@ -91,7 +91,7 @@ The public template must describe exactly which live data and payment flows pass
 
 - [ ] Create the minimal monorepo, lockfile, scripts, manifest and docs with MIT licensing.
 - [x] Add separate Next.js and Foundry packages with tested native-HBAR custody/recovery mechanics; signed quote and app checkout remain open.
-- [ ] Run fresh scaffold/install/build/boot on both Node versions; repair candidate dependencies before proceeding.
+- [ ] Run fresh scaffold/install/build/boot on both Node versions; local CLI 0.4.0 template-directory copies passed the full matrix and zero-secret testnet/mainnet boot, while the public GitHub `owner/repo` path still needs publication and verification.
 
 ### Task 2: Explicit network and trust configuration
 
@@ -103,7 +103,7 @@ The public template must describe exactly which live data and payment flows pass
 
 ### Task 3: HCS transaction and Mirror evidence
 
-**Files:** `hcs.ts`, `packages/neuron-go/cmd/hcs-submit`, fixtures/tests, evidence server route/view, fresh-testnet verification script. **Interface:** submit returns a transaction reference only after consensus receipt; read-back returns a verified message record with topic, payer, consensus timestamp, sequence, transaction ID, schema/version and payload hash. **Checks:** 1,024/1,025/2,048-byte fixtures, chunk groups, relative `links.next`, duplicate/missing/out-of-order chunks, malformed base64/JSON, unknown schema, payer mismatch, nonexistent topic, 404/429/5xx, indexing delay and timeout. The testnet integration creates or uses a controlled topic, submits from the candidate, obtains receipt `SUCCESS`, and independently matches Mirror result. One working-tree transaction now has this narrow proof; commit attribution and remaining edge cases are pending. **Pass:** clickable fresh transaction and topic evidence attributable to the submitted commit. **Stop:** treating transaction submission or an empty Mirror page as proof.
+**Files:** `hcs.ts`, `packages/neuron-go/cmd/hcs-submit`, fixtures/tests, evidence server route/view, fresh-testnet verification script. **Interface:** submit returns a transaction reference only after consensus receipt; read-back returns a verified message record with topic, payer, consensus timestamp, sequence, transaction ID, schema/version and payload hash. **Checks:** 1,024/1,025/2,048-byte fixtures, chunk groups, relative `links.next`, duplicate/missing/out-of-order chunks, malformed base64/JSON, unknown schema, payer mismatch, nonexistent topic, 404/429/5xx, indexing delay and timeout. The testnet integration creates or uses a controlled topic, submits from the candidate, obtains receipt `SUCCESS`, and independently matches Mirror result. A fresh HCS message now names local source commit `c71e536`; a public submission and remaining edge cases are pending. **Pass:** clickable fresh transaction and topic evidence attributable to the submitted commit. **Stop:** treating transaction submission or an empty Mirror page as proof.
 
 - [ ] Implement receipt-first HCS submission and bounded Mirror reconciliation.
 - [ ] Verify metadata before messages, reassemble chunks exactly, and reject mismatches.
