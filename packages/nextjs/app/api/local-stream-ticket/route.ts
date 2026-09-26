@@ -1,6 +1,7 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { customerAuthOrigin, customerToken, getCustomerSession } from "../../../lib/customer-auth";
+import type { CustomerSession } from "../../../lib/customer-auth";
 
 export const runtime = "nodejs";
 
@@ -31,11 +32,13 @@ export async function POST(request: Request): Promise<Response> {
   if (request.headers.get("host") !== appOrigin.host) {
     return Response.json({ error: "App host rejected" }, { status: 403 });
   }
+  let customerSession: CustomerSession | null = null;
   if (process.env.NEURON_ENABLE_CUSTOMER_AUTH === "true") {
     try {
       const authOrigin = customerAuthOrigin();
       if (!authOrigin || authOrigin.origin !== appOrigin.origin) throw new Error("Customer auth origin mismatch");
-      if (!getCustomerSession(customerToken(request, authOrigin))) {
+      customerSession = getCustomerSession(authOrigin, customerToken(request, authOrigin));
+      if (!customerSession) {
         return Response.json({ error: "Customer sign-in required" }, { status: 401 });
       }
     } catch {
@@ -83,9 +86,15 @@ export async function POST(request: Request): Promise<Response> {
     }
     const expiry = Math.floor(Date.now() / 1000) + 45;
     const nonce = randomBytes(16).toString("hex");
-    const signature = createHmac("sha256", Buffer.from(token, "hex"))
-      .update(`v1:${expiry}:${nonce}:${sellerAccount}:${(health as Record<string, string>).instanceId}`).digest("hex");
-    return Response.json({ url: url.href, sellerAccount, ticket: `auth.v1.${expiry}.${nonce}.${signature}` }, {
+    const ownerHex = customerSession?.ownerAddress.slice(2).toLowerCase();
+    const payload = customerSession ?
+      `v2:${expiry}:${nonce}:${customerSession.sessionId}:${ownerHex}:${sellerAccount}:${(health as Record<string, string>).instanceId}` :
+      `v1:${expiry}:${nonce}:${sellerAccount}:${(health as Record<string, string>).instanceId}`;
+    const signature = createHmac("sha256", Buffer.from(token, "hex")).update(payload).digest("hex");
+    const ticket = customerSession ?
+      `auth.v2.${expiry}.${nonce}.${customerSession.sessionId}.${ownerHex}.${signature}` :
+      `auth.v1.${expiry}.${nonce}.${signature}`;
+    return Response.json({ url: url.href, sellerAccount, ticket }, {
       headers: { "Cache-Control": "no-store" },
     });
   } catch {

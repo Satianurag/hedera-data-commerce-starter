@@ -7,7 +7,7 @@ export async function POST(request: Request): Promise<Response> {
     const origin = customerAuthOrigin();
     if (!origin) return Response.json({ error: "Customer sign-in is disabled" }, { status: 404 });
     if (!sameOrigin(request, origin)) return Response.json({ error: "Origin rejected" }, { status: 403 });
-    revokeCustomerSession(customerToken(request, origin));
+    revokeCustomerSession(origin, customerToken(request, origin));
     return Response.json({ signedOut: true },
       { headers: { "Cache-Control": "no-store", "Set-Cookie": customerCookie(origin, "", 0) } });
   } catch {

@@ -12,7 +12,7 @@ export async function POST(request: Request): Promise<Response> {
         Object.keys(body).sort().join(",") !== "challengeId,signature") {
       return Response.json({ error: "Invalid sign-in request" }, { status: 400 });
     }
-    const { session, token } = verifyCustomerChallenge(body.challengeId, body.signature);
+    const { session, token } = verifyCustomerChallenge(origin, body.challengeId, body.signature);
     return Response.json(session, { headers: { "Cache-Control": "no-store", "Set-Cookie": customerCookie(origin, token) } });
   } catch (error) {
     const status = error instanceof InvalidCustomerRequest ? error.status :
