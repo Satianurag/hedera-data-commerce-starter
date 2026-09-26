@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import type Database from "better-sqlite3";
-import { Interface, getAddress, zeroPadValue } from "ethers";
+import { Interface, computeAddress, getAddress, zeroPadValue } from "ethers";
 import { assertEvmRpcNetwork, confirmEscrowFunding, networkConfigFromEnv,
   type VerifiedSellerQuote } from "@neuron/hedera";
 import { withCustomerDatabase, type CustomerSession } from "./customer-auth";
@@ -45,8 +45,12 @@ export type FundingRecord = Readonly<{
   abandonedAt: number | null;
   transactionHash: string | null; reportedHash: string | null; observedHash: string | null;
   escrowId: string | null; termsHash: string;
-  contractId: string; contractAddress: string; sellerAddress: string; amountTinybar: string;
+  contractId: string; contractAddress: string; sellerAccountId: string | null;
+  sellerAddress: string; amountTinybar: string;
   quoteExpiresAt: number; refundAfter: number; preparedAt: number;
+  settlementHash: string | null; settlementMirrorTimestamp: string | null;
+  settlementRecipientAddress: string | null; settlementAmountTinybar: string | null;
+  settlementVerifiedAt: number | null;
 }>;
 export type RefundRecord = Readonly<{
   id: string; fundingId: string; state: FundingState; escrowId: string;
@@ -59,11 +63,15 @@ type FundingRow = {
   id: string; quote_intent_id: string; state: FundingState; contract_state: ContractState;
   transaction_hash: string | null; observed_hash: string | null; confirmed_hash: string | null;
   escrow_id: string | null; terms_hash: string;
-  contract_id: string; contract_address: string; seller_address: string; amount_tinybar: string;
+  contract_id: string; contract_address: string; seller_account_id: string | null;
+  seller_public_key: string | null; seller_address: string; amount_tinybar: string;
   quote_expires_at: number; refund_after: number; prepared_at: number;
   prepared_block: number; scan_next_block: number; transaction_json: string; session_id: string;
   wallet_opened_at: number | null; runtime_sha256: string | null; abi_json: string | null;
   abandoned_at: number | null; abandon_scan_next_block: number | null;
+  settlement_hash: string | null;
+  settlement_mirror_timestamp: string | null; settlement_recipient_address: string | null;
+  settlement_amount_tinybar: string | null; settlement_verified_at: number | null;
   owner_address: string; origin: string;
 };
 type RefundRow = {
@@ -84,6 +92,7 @@ function withFundingTable<T>(work: (db: Database.Database) => T): T {
       state TEXT NOT NULL CHECK(state IN ('prepared', 'submitted', 'executed', 'failed', 'conflict')),
       contract_state TEXT CHECK(contract_state IN ('funded', 'approved', 'paid', 'refunded')),
       contract_id TEXT NOT NULL, contract_address TEXT NOT NULL, seller_address TEXT NOT NULL,
+      seller_account_id TEXT, seller_public_key TEXT,
       terms_hash TEXT NOT NULL UNIQUE, amount_tinybar TEXT NOT NULL,
       quote_expires_at INTEGER NOT NULL, refund_after INTEGER NOT NULL,
       prepared_block INTEGER NOT NULL, scan_next_block INTEGER NOT NULL, prepared_at INTEGER NOT NULL,
@@ -91,7 +100,10 @@ function withFundingTable<T>(work: (db: Database.Database) => T): T {
       wallet_opened_at INTEGER, runtime_sha256 TEXT, abi_json TEXT,
       abandoned_at INTEGER, abandon_scan_next_block INTEGER,
       observed_hash TEXT UNIQUE, confirmed_hash TEXT UNIQUE,
-      escrow_id TEXT, updated_at INTEGER NOT NULL
+      escrow_id TEXT, settlement_hash TEXT UNIQUE,
+      settlement_mirror_timestamp TEXT, settlement_recipient_address TEXT,
+      settlement_amount_tinybar TEXT, settlement_verified_at INTEGER,
+      updated_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS customer_funding_history_idx
       ON customer_funding_intents(owner_address, origin, prepared_at DESC, id DESC);`);
@@ -110,6 +122,28 @@ function withFundingTable<T>(work: (db: Database.Database) => T): T {
     }
     if (!columns.some(column => column.name === "abandon_scan_next_block")) {
       db.exec("ALTER TABLE customer_funding_intents ADD COLUMN abandon_scan_next_block INTEGER");
+    }
+    if (!columns.some(column => column.name === "settlement_hash")) {
+      db.exec("ALTER TABLE customer_funding_intents ADD COLUMN settlement_hash TEXT");
+      db.exec("CREATE UNIQUE INDEX IF NOT EXISTS customer_funding_settlement_hash_idx ON customer_funding_intents(settlement_hash)");
+    }
+    if (!columns.some(column => column.name === "settlement_mirror_timestamp")) {
+      db.exec("ALTER TABLE customer_funding_intents ADD COLUMN settlement_mirror_timestamp TEXT");
+    }
+    if (!columns.some(column => column.name === "settlement_recipient_address")) {
+      db.exec("ALTER TABLE customer_funding_intents ADD COLUMN settlement_recipient_address TEXT");
+    }
+    if (!columns.some(column => column.name === "settlement_amount_tinybar")) {
+      db.exec("ALTER TABLE customer_funding_intents ADD COLUMN settlement_amount_tinybar TEXT");
+    }
+    if (!columns.some(column => column.name === "settlement_verified_at")) {
+      db.exec("ALTER TABLE customer_funding_intents ADD COLUMN settlement_verified_at INTEGER");
+    }
+    if (!columns.some(column => column.name === "seller_account_id")) {
+      db.exec("ALTER TABLE customer_funding_intents ADD COLUMN seller_account_id TEXT");
+    }
+    if (!columns.some(column => column.name === "seller_public_key")) {
+      db.exec("ALTER TABLE customer_funding_intents ADD COLUMN seller_public_key TEXT");
     }
     return work(db);
   });
@@ -153,10 +187,15 @@ function asRecord(row: FundingRow): FundingRecord {
     transactionHash: row.confirmed_hash ?? row.observed_hash ?? row.transaction_hash,
     reportedHash: row.transaction_hash, observedHash: row.observed_hash,
     escrowId: row.escrow_id, termsHash: row.terms_hash, contractId: row.contract_id,
-    contractAddress: row.contract_address, sellerAddress: row.seller_address,
+    contractAddress: row.contract_address, sellerAccountId: row.seller_account_id,
+    sellerAddress: row.seller_address,
     amountTinybar: row.amount_tinybar,
     quoteExpiresAt: row.quote_expires_at, refundAfter: row.refund_after,
-    preparedAt: row.prepared_at };
+    preparedAt: row.prepared_at, settlementHash: row.settlement_hash,
+    settlementMirrorTimestamp: row.settlement_mirror_timestamp,
+    settlementRecipientAddress: row.settlement_recipient_address,
+    settlementAmountTinybar: row.settlement_amount_tinybar,
+    settlementVerifiedAt: row.settlement_verified_at };
 }
 
 function asRefund(row: RefundRow): RefundRecord {
@@ -329,12 +368,13 @@ export async function prepareCustomerFunding(session: CustomerSession, origin: U
     const id = randomBytes(16).toString("hex");
     db.prepare(`INSERT INTO customer_funding_intents
       (id, quote_intent_id, session_id, owner_address, origin, state, contract_id,
-       contract_address, seller_address, terms_hash, amount_tinybar, quote_expires_at, refund_after,
+       contract_address, seller_address, seller_account_id, seller_public_key,
+       terms_hash, amount_tinybar, quote_expires_at, refund_after,
        prepared_block, scan_next_block, prepared_at, transaction_json, runtime_sha256, abi_json, updated_at)
-      VALUES (?, ?, ?, ?, ?, 'prepared', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      VALUES (?, ?, ?, ?, ?, 'prepared', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(id, intent.id, session.sessionId, session.ownerAddress, origin.origin,
         verified.terms.escrowContractId, verified.terms.escrowAddress, verified.terms.sellerAddress,
-        verified.termsHash,
+        verified.terms.sellerAccountId, verified.sellerPublicKey, verified.termsHash,
         verified.terms.amountTinybar, Number(verified.terms.expiresAt), Number(verified.terms.refundAfter),
         blockNumber, blockNumber, commitTime, JSON.stringify(transaction), runtimeSha256, escrowAbiJson, commitTime);
     return { funding: { id, quoteIntentId: intent.id, state: "prepared" as const, contractState: null,
@@ -342,9 +382,12 @@ export async function prepareCustomerFunding(session: CustomerSession, origin: U
       transactionHash: null, reportedHash: null, observedHash: null,
       escrowId: null, termsHash: verified.termsHash,
       contractId: verified.terms.escrowContractId, contractAddress: verified.terms.escrowAddress,
-      sellerAddress: verified.terms.sellerAddress,
+      sellerAccountId: verified.terms.sellerAccountId, sellerAddress: verified.terms.sellerAddress,
       amountTinybar: verified.terms.amountTinybar, quoteExpiresAt: Number(verified.terms.expiresAt),
-      refundAfter: Number(verified.terms.refundAfter), preparedAt: commitTime }, transaction };
+      refundAfter: Number(verified.terms.refundAfter), preparedAt: commitTime,
+      settlementHash: null, settlementMirrorTimestamp: null,
+      settlementRecipientAddress: null, settlementAmountTinybar: null,
+      settlementVerifiedAt: null }, transaction };
   }).immediate());
 }
 
@@ -520,6 +563,201 @@ async function escrowState(row: FundingRow, id: bigint): Promise<ContractState> 
   return state;
 }
 
+async function scanReleased(row: FundingRow): Promise<string | null> {
+  if (!row.escrow_id || !row.confirmed_hash) throw new Error("Paid escrow has no confirmed funding");
+  const config = networkConfigFromEnv(process.env);
+  if (config.network !== "testnet") throw new Error("Settlement discovery is testnet-only");
+  const abi = pinnedInterface(row.abi_json);
+  const fundingResponse = await fetch(`${config.mirrorBaseUrl}/api/v1/contracts/results/${row.confirmed_hash}`, {
+    redirect: "error", cache: "no-store", signal: AbortSignal.timeout(10_000) });
+  if (fundingResponse.status === 404) return null;
+  if (!fundingResponse.ok) throw new Error("Mirror funded escrow result is unavailable");
+  const funded = await limitedJson(fundingResponse) as Record<string, unknown>;
+  if (!funded || funded.hash !== row.confirmed_hash || funded.contract_id !== row.contract_id ||
+      funded.result !== "SUCCESS" || typeof funded.timestamp !== "string" ||
+      !/^\d+\.\d{9}$/.test(funded.timestamp) ||
+      BigInt(funded.timestamp.split(".")[0]) >= BigInt(row.refund_after)) {
+    throw new Error("Mirror funding result cannot bound the seller withdrawal search");
+  }
+  const topic = abi.getEvent("Released")?.topicHash;
+  if (!topic) throw new Error("Pinned escrow ABI has no Released event");
+  const query = new URLSearchParams({ topic0: topic,
+    topic1: topicUint(BigInt(row.escrow_id)), topic2: zeroPadValue(row.seller_address, 32),
+    limit: "100", order: "desc" });
+  query.append("timestamp", `gte:${funded.timestamp}`);
+  query.append("timestamp", `lte:${row.refund_after}.999999999`);
+  const response = await fetch(`${config.mirrorBaseUrl}/api/v1/contracts/${row.contract_id}/results/logs?${query}`, {
+    redirect: "error", cache: "no-store", signal: AbortSignal.timeout(10_000) });
+  if (!response.ok) throw new Error("Mirror seller withdrawal log search is unavailable");
+  const page = await limitedJson(response, 262_144) as Record<string, unknown>;
+  if (!page || !Array.isArray(page.logs) || page.logs.length > 100 ||
+      !page.links || typeof page.links !== "object" ||
+      (page.links as { next?: unknown }).next !== null) {
+    throw new Error("Mirror seller withdrawal log search is incomplete");
+  }
+  if (page.logs.length === 0) return null;
+  if (page.logs.length !== 1) throw new Error("Multiple seller withdrawal logs found for one escrow");
+  const log = page.logs[0] as { address?: unknown; contract_id?: unknown; topics?: unknown;
+    data?: unknown; transaction_hash?: unknown; timestamp?: unknown };
+  if (!log || log.contract_id !== row.contract_id || typeof log.address !== "string" ||
+      getAddress(log.address) !== getAddress(row.contract_address) || !Array.isArray(log.topics) ||
+      typeof log.data !== "string" || typeof log.transaction_hash !== "string" ||
+      !hashPattern.test(log.transaction_hash) || typeof log.timestamp !== "string" ||
+      !/^\d+\.\d{9}$/.test(log.timestamp) ||
+      BigInt(log.timestamp.replace(".", "")) < BigInt(funded.timestamp.replace(".", "")) ||
+      BigInt(log.timestamp.split(".")[0]) >= BigInt(row.refund_after)) {
+    throw new Error("Mirror Released log identity is malformed");
+  }
+  const event = abi.parseLog({ topics: log.topics as string[], data: log.data });
+  if (event?.name !== "Released" || BigInt(event.args.id) !== BigInt(row.escrow_id) ||
+      getAddress(event.args.seller) !== row.seller_address ||
+      getAddress(event.args.to) !== row.seller_address ||
+      BigInt(event.args.amount) !== BigInt(row.amount_tinybar)) {
+    throw new Error("Mirror Released log conflicts with the funded seller and amount");
+  }
+  return log.transaction_hash.toLowerCase();
+}
+
+async function reconcileCustomerSettlement(session: CustomerSession, origin: URL,
+    id: string): Promise<FundingRecord> {
+  const row = fundingRow(session, origin, id);
+  if (row.state !== "executed" || row.contract_state !== "paid" || !row.escrow_id ||
+      !row.confirmed_hash || !row.runtime_sha256 || !row.seller_account_id || !row.seller_public_key) {
+    throw new Error("Settlement requires a confirmed funded escrow in Paid storage state");
+  }
+  const abi = pinnedInterface(row.abi_json);
+  const code = hex(await rpc("eth_getCode", [row.contract_address, "latest"]), "settlement contract runtime");
+  if (code === "0x" || createHash("sha256").update(Buffer.from(code.slice(2), "hex")).digest("hex") !==
+      row.runtime_sha256) throw new Error("Paid escrow runtime differs from its funded build");
+  const hash = row.settlement_hash ?? await scanReleased(row);
+  if (!hash) return asRecord(fundingRow(session, origin, id));
+  const [tx, receipt] = await Promise.all([
+    rpc("eth_getTransactionByHash", [hash]), rpc("eth_getTransactionReceipt", [hash]),
+  ]) as [Record<string, unknown> | null, Record<string, unknown> | null];
+  if (!tx || !receipt) return asRecord(fundingRow(session, origin, id));
+  if (typeof tx.hash !== "string" || tx.hash.toLowerCase() !== hash ||
+      typeof tx.from !== "string" || getAddress(tx.from) !== row.seller_address ||
+      typeof tx.to !== "string" || getAddress(tx.to) !== getAddress(row.contract_address) ||
+      typeof tx.input !== "string" || tx.input.toLowerCase() !==
+        abi.encodeFunctionData("withdraw", [BigInt(row.escrow_id)]).toLowerCase() ||
+      quantity(tx.value, "seller withdrawal transaction value") !== 0n ||
+      quantity(receipt.status, "seller withdrawal receipt status") !== 1n ||
+      typeof receipt.transactionHash !== "string" || receipt.transactionHash.toLowerCase() !== hash) {
+    throw new Error("Seller withdrawal transaction or receipt does not match the escrow");
+  }
+  if (!Array.isArray(receipt.logs)) throw new Error("Seller withdrawal receipt has no logs");
+  const released = receipt.logs.flatMap(value => {
+    if (!value || typeof value !== "object") return [];
+    const log = value as { address?: unknown; topics?: unknown; data?: unknown };
+    if (typeof log.address !== "string" || getAddress(log.address) !== getAddress(row.contract_address) ||
+        !Array.isArray(log.topics) || typeof log.data !== "string") return [];
+    try {
+      const event = abi.parseLog({ topics: log.topics as string[], data: log.data });
+      return event?.name === "Released" ? [event] : [];
+    } catch { return []; }
+  });
+  if (released.length !== 1 || BigInt(released[0].args.id) !== BigInt(row.escrow_id) ||
+      getAddress(released[0].args.seller) !== row.seller_address ||
+      getAddress(released[0].args.to) !== row.seller_address ||
+      BigInt(released[0].args.amount) !== BigInt(row.amount_tinybar)) {
+    throw new Error("Withdrawal receipt lacks the exact seller Released event");
+  }
+  const config = networkConfigFromEnv(process.env);
+  if (config.network !== "testnet") throw new Error("Settlement reconciliation is testnet-only");
+  const base = `${config.mirrorBaseUrl}/api/v1/contracts/results/${hash}`;
+  const [resultResponse, actionsResponse, sellerResponse] = await Promise.all([
+    fetch(base, { redirect: "error", cache: "no-store", signal: AbortSignal.timeout(10_000) }),
+    fetch(`${base}/actions?limit=100`, { redirect: "error", cache: "no-store", signal: AbortSignal.timeout(10_000) }),
+    fetch(`${config.mirrorBaseUrl}/api/v1/accounts/${row.seller_address}`, {
+      redirect: "error", cache: "no-store", signal: AbortSignal.timeout(10_000) }),
+  ]);
+  if ([resultResponse, actionsResponse, sellerResponse].some(response => response.status === 404)) {
+    return asRecord(fundingRow(session, origin, id));
+  }
+  if (!resultResponse.ok || !actionsResponse.ok || !sellerResponse.ok) {
+    throw new Error("Independent Mirror settlement evidence is unavailable");
+  }
+  const [mirror, actionPage, seller] = await Promise.all([
+    limitedJson(resultResponse), limitedJson(actionsResponse, 262_144), limitedJson(sellerResponse),
+  ]) as [Record<string, unknown>, Record<string, unknown>, Record<string, unknown>];
+  if (!mirror || mirror.hash !== hash || mirror.contract_id !== row.contract_id ||
+      mirror.result !== "SUCCESS" || typeof mirror.timestamp !== "string" ||
+      !/^\d+\.\d{9}$/.test(mirror.timestamp) || !Array.isArray(mirror.logs) ||
+      !seller || seller.deleted !== false || seller.account !== row.seller_account_id ||
+      typeof seller.evm_address !== "string" || getAddress(seller.evm_address) !== row.seller_address) {
+    throw new Error("Mirror result or seller account does not match the funded escrow");
+  }
+  const sellerKey = seller.key as { _type?: unknown; key?: unknown } | null;
+  if (!sellerKey || sellerKey._type !== "ECDSA_SECP256K1" ||
+      typeof sellerKey.key !== "string" ||
+      sellerKey.key.toLowerCase() !== row.seller_public_key.toLowerCase() ||
+      computeAddress(`0x${sellerKey.key}`) !== row.seller_address) {
+    throw new Error("Seller account key or EVM alias differs from the signed quote");
+  }
+  const mirrorReleased = mirror.logs.flatMap(value => {
+    if (!value || typeof value !== "object") return [];
+    const log = value as { address?: unknown; topics?: unknown; data?: unknown; contract_id?: unknown };
+    if (log.contract_id !== row.contract_id || typeof log.address !== "string" ||
+        getAddress(log.address) !== getAddress(row.contract_address) ||
+        !Array.isArray(log.topics) || typeof log.data !== "string") return [];
+    try {
+      const event = abi.parseLog({ topics: log.topics as string[], data: log.data });
+      return event?.name === "Released" ? [event] : [];
+    } catch { return []; }
+  });
+  if (mirrorReleased.length !== 1 || BigInt(mirrorReleased[0].args.id) !== BigInt(row.escrow_id) ||
+      getAddress(mirrorReleased[0].args.seller) !== row.seller_address ||
+      getAddress(mirrorReleased[0].args.to) !== row.seller_address ||
+      BigInt(mirrorReleased[0].args.amount) !== BigInt(row.amount_tinybar)) {
+    throw new Error("Mirror result lacks the exact seller Released event");
+  }
+  if (!actionPage || !Array.isArray(actionPage.actions) || actionPage.actions.length > 100 ||
+      !actionPage.links || typeof actionPage.links !== "object" ||
+      (actionPage.links as { next?: unknown }).next !== null) {
+    throw new Error("Mirror seller transfer actions are incomplete");
+  }
+  const positiveActions = actionPage.actions.filter(value => {
+    if (!value || typeof value !== "object") throw new Error("Mirror seller transfer action is malformed");
+    const action = value as { value?: unknown };
+    if (!Number.isSafeInteger(action.value) || Number(action.value) < 0) {
+      throw new Error("Mirror seller transfer value is not a safe tinybar integer");
+    }
+    return Number(action.value) > 0;
+  }) as Record<string, unknown>[];
+  const payout = positiveActions[0];
+  // Mirror contract-action values use tinybar; the JSON-RPC transaction value
+  // above uses weibars. The quote cap is 1 HBAR, so this JSON integer is exact.
+  if (positiveActions.length !== 1 || !payout || payout.call_depth !== 1 ||
+      payout.call_operation_type !== "CALL" || payout.call_type !== "CALL" ||
+      payout.result_data_type !== "OUTPUT" || payout.caller_type !== "CONTRACT" ||
+      payout.caller !== row.contract_id || payout.recipient_type !== "ACCOUNT" ||
+      payout.recipient !== seller.account || payout.timestamp !== mirror.timestamp ||
+      BigInt(payout.value as number) !== BigInt(row.amount_tinybar)) {
+    throw new Error("Mirror actions do not show the exact native HBAR transfer to the seller");
+  }
+  if (await escrowState(row, BigInt(row.escrow_id)) !== "paid") {
+    throw new Error("Escrow storage no longer reports a completed seller withdrawal");
+  }
+  return withFundingTable(db => db.transaction(() => {
+    const current = db.prepare("SELECT * FROM customer_funding_intents WHERE id = ?")
+      .get(id) as FundingRow | undefined;
+    if (!current || current.state !== "executed" || current.contract_state !== "paid" ||
+        current.escrow_id !== row.escrow_id || current.confirmed_hash !== row.confirmed_hash ||
+        (current.settlement_hash && current.settlement_hash !== hash) ||
+        (current.settlement_mirror_timestamp && current.settlement_mirror_timestamp !== mirror.timestamp) ||
+        (current.settlement_recipient_address && current.settlement_recipient_address !== row.seller_address) ||
+        (current.settlement_amount_tinybar && current.settlement_amount_tinybar !== row.amount_tinybar)) {
+      throw new Error("Settlement evidence conflicts with the durable funding journal");
+    }
+    db.prepare(`UPDATE customer_funding_intents SET settlement_hash = ?, settlement_mirror_timestamp = ?,
+      settlement_recipient_address = ?, settlement_amount_tinybar = ?,
+      settlement_verified_at = COALESCE(settlement_verified_at, ?), updated_at = ? WHERE id = ?`)
+      .run(hash, mirror.timestamp, row.seller_address, row.amount_tinybar,
+        Math.floor(Date.now() / 1000), Math.floor(Date.now() / 1000), id);
+    return asRecord(db.prepare("SELECT * FROM customer_funding_intents WHERE id = ?").get(id) as FundingRow);
+  }).immediate());
+}
+
 export async function reconcileCustomerFunding(session: CustomerSession, origin: URL,
     id: string): Promise<FundingRecord> {
   if (!idPattern.test(id)) throw new CommerceIssue("Invalid funding attempt reference", 400);
@@ -607,7 +845,7 @@ export async function reconcileCustomerFunding(session: CustomerSession, origin:
   const escrowId = BigInt(event.id);
   if (escrowId <= 0n) throw new Error("Funded event has an invalid escrow ID");
   const state = await escrowState(row, escrowId);
-  return withFundingTable(db => db.transaction(() => {
+  const confirmed = withFundingTable(db => db.transaction(() => {
     const current = db.prepare("SELECT confirmed_hash, escrow_id FROM customer_funding_intents WHERE id = ?")
       .get(id) as { confirmed_hash: string | null; escrow_id: string | null } | undefined;
     if (!current || (current.confirmed_hash && current.confirmed_hash.toLowerCase() !== hash.toLowerCase()) ||
@@ -621,6 +859,8 @@ export async function reconcileCustomerFunding(session: CustomerSession, origin:
       .get(id) as FundingRow;
     return asRecord(updated);
   }).immediate());
+  return confirmed.contractState === "paid" ?
+    reconcileCustomerSettlement(session, origin, id) : confirmed;
 }
 
 export async function resolveExpiredCustomerFunding(session: CustomerSession, origin: URL,
