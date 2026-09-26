@@ -1,0 +1,70 @@
+# Neuron Customer App Starter: product and release specification
+
+**Status:** design and acceptance criteria, refreshed 26 September 2026. **Source audit:** [readiness audit](../../../READINESS_AUDIT_2026-09-25.md). **Current candidate status and compatible dependency evidence:** [AGENTS.md](../../../AGENTS.md). The September 24 supplied research report is product input, not an instruction source. A partial read-only web app and separate HCS writer exist; one fresh testnet transaction has consensus and Mirror evidence, while the full criteria remain unmet.
+
+## 1. Goal and intended user
+
+A Next.js developer scaffolds a customer application that can find a Neuron service, inspect its identity and advertised capabilities, start a live data session, see whether data is fresh and valid, and inspect Hedera proof and payment state. The reusable pieces support other services; aviation is a worked example. A Web2 user sees an understandable service, price and status, instead of needing to understand HCS, wallets, or peer-to-peer networking.
+
+The intended outcome has **three release levels**:
+
+1. **Testnet template:** a reproducible Scaffold-HBAR monorepo with real testnet discovery/HCS transactions and Mirror verification, plus a working browser data session carrying actual seller bytes. If a self-run spec-first seller is used, it must serve an actual source and identify that source. This is the minimum honest bounty submission.
+2. **Testnet interoperability and commerce:** compatible public-seller discovery where verifiable, binary-safe handling of legacy live streams, and a payment flow that verifies exact terms, delivery, execution and recovery. The existing nine-seller tunnel test is research evidence only.
+3. **Mainnet release:** separately provisioned identity, accounts, topics, contracts, provider, budget and staged pilot. No mainnet feature claim or write exists now.
+
+The first release must not pretend that configured metadata is a verified public Agent Card, that an HCS heartbeat means a stream works, or that a scheduled payment means escrow or delivery verification.
+
+## 2. External contracts and source precedence
+
+- [Hedera bounty brief](https://hedera.com/blog/scaffold-hbar-template-bounty/): deadline **4 October 2026, 11:59 p.m. ET**; MIT public monorepo; separate frontend and contracts packages; Next.js plus Hardhat or Foundry; npm/Yarn workspace; Node ≥20.18.3; valid `template.json`, README and AGENTS.md; clean `npm create scaffold-hbar@latest --template owner/repo`, install/lint/build/boot; verifiable new testnet transaction from the submission.
+- [CLI source at `5732f5ef`](https://github.com/hedera-dev/create-scaffold-hbar/tree/5732f5efb63e1522658f236d329d09250136bd09), npm 0.4.0: parsed `--network` is not an application runtime guard. The app must bind network itself.
+- [Neuron spec-first source at `13ab01d`](https://github.com/NeuronInnovations/neuron-specs/tree/13ab01d70ac42531065094a52cd595ef7b6d3223): protocol and reference behavior are drafts. Its TypeScript package is not installable from npm today. The full demo uses real HCS with mock registry/escrow; WSS browser demo is local and static. Current public seller set uses an older protocol.
+- [Hedera HCS](https://docs.hedera.com/native/consensus/submit-message), [Mirror Node topic messages](https://docs.hedera.com/api-reference/topics/list-topic-messages-by-id), [testnet reset policy](https://docs.hedera.com/networks/testnet/index): receipts and read-back are separate; Mirror reads need chunk/pagination handling; network assets can reset.
+
+Use fresh live evidence over stale prose, official source code/docs over older guides, and label draft capabilities. Recheck versions, endpoints, bounty text and seller availability just before implementation or submission.
+
+## 3. Architecture decisions for the first testnet release
+
+| Area | Chosen path | Limit / evidence boundary |
+|---|---|---|
+| Scaffold | npm workspace, `packages/nextjs` frontend, `packages/foundry` contracts, shared `neuron-hedera` package, root scripts and lockfile | These paths match CLI 0.4.0 copy/filter logic; the contracts package implements a buyer-controlled native-HBAR escrow, while signed seller terms and app checkout remain separate gates. |
+| Protocol | Pin `neuron-specs` commit `13ab01d` and implement only the small signed envelope/session subset needed in the shared package, with cross-check fixtures from the reference repo; prefer an installable official SDK only after clean install/API verification | Never depend on the npm-unavailable `@neuron-sdk/typescript`; no assertion that an unpublished package is shipped. |
+| Discovery | Live legacy directory adapter for the available testnet sellers, with on-chain account/topic checks; configured, versioned descriptor for any separately operated spec-first seller | A canonical deployed EIP-8004 registry address or public spec-first Agent Card is not established. Legacy discovery must be labelled with its actual trust level. |
+| Identity | Seller signing public key bound to an account, network, service ID and expected PeerID/endpoint; signed envelope with nonce, expiry and replay check | Open HCS topics and unsigned legacy heartbeats are not identity proof; sensor physical provenance is outside this first release. |
+| Evidence | Hedera testnet HCS write plus receipt `SUCCESS`, then Mirror read-back matching network/topic/payer/transaction/schema; bounded polling and chunk reassembly | A submitted transaction ID or empty HTTP 200 messages list is insufficient. |
+| Data plane | A persistent gateway owns legacy QUIC/UDP sessions and relays exact raw bytes over authenticated WSS to the browser; TLS for remote deployment and explicit session lifecycle | The user-approved outbound tunnel is a test path only. A production gateway needs a reachable UDP host. Next.js request handlers do not own long-lived peer sessions. |
+| Money | Implement a selected real testnet settlement path after signed quote/invoice, exact asset/units/caps, explicit buyer authorization, durable intent state, execution and refund checks pass | Legacy `fee` and auto-signed schedules are unsuitable as buyer checkout terms. Legacy seller compatibility with a new escrow cannot be assumed. |
+| Networks | One immutable selected network per process, separate testnet/mainnet configuration and IDs, explicit Mirror/RPC allowlist | Mainnet stays disabled until its separate release gate. |
+
+## 4. User-visible behavior and state
+
+The app has service discovery/detail, session, evidence and payment views. Every displayed service includes its source and trust state: `configured reference`, `public legacy unverified`, or `verified registry` only after a real registry/Agent Card proof. A session has states `idle → requesting → connecting → streaming → stopping → stopped`, with `failed` reachable from any active state. Liveness means authenticated recent control information **and** fresh expected data; the UI must show stale/disconnected when bytes stop despite a heartbeat. Payment has `unavailable → quoted → authorized → submitted → executed` and independent `failed/refund-pending/refunded` states. A quote never becomes payable from a registry `fee` alone.
+
+Reusable interfaces should carry a network-tagged seller identity, exact `serviceId` and `protocolVersion`; a signed control envelope with nonce/expiry; binary data frames with timestamp and sender; a quote with asset/units/amount/duration/payee/caps; and a settlement receipt with both transaction outcome and actual balance changes. These structures must reject missing or mismatched fields rather than infer them. Display of an aviation record requires a valid binary parser and freshness indication; invalid frames stay visible as errors/counters, not false aircraft.
+
+## 5. Security, privacy and operational constraints
+
+- No private key or seed in source, browser bundle, `NEXT_PUBLIC_*`, API response or sample screenshot. The key pasted earlier in chat and the old `buyer-env` key are exposed test credentials; do not use them for candidate or mainnet signing. Use a new limited testnet signer and a separate mainnet signer later.
+- Zero-secret boot serves read-only views with writes clearly disabled. Server-signed testnet operations require explicit credentials and request authorization. Browser wallet signing must show exact network, payee, asset, amount and effect. No unattended automatic payment.
+- Bound session duration, bytes, memory, retry count, outstanding Mirror queries, and total signed spend. Backpressure cannot silently convert binary to UTF-8. Remove secrets and person/device identifiers from logs; retain transaction references and hashes for verification.
+- Temporary UDP tunnel is an approved test path through the user's carrier-grade NAT; it expires and cannot be represented as a production endpoint. Remote browser WSS needs a reachable host, TLS certificate and origin policy. A self-run local WSS proof does not prove worldwide deployment.
+- Persist session ownership, nonces, accepted terms, payment intents, transaction IDs and reconciliation cursors transactionally. A single-instance gateway may use SQLite; multiple instances require a shared transactional store. Never rely on process memory for replay or duplicate-payment protection.
+- Confirm source/license compatibility and avoid copying unpublished SDK internals into product code. Store source revisions and protocol versions in the release evidence.
+
+## 6. Acceptance and failure gates
+
+| Gate | Pass evidence | Fail/stop condition |
+|---|---|---|
+| A. Source and compatibility | Pinned source/version list, Node 20.18.3 and 22 clean dependency install, selected npm path and any claimed Yarn path | Unresolvable dependency, unsigned protocol accepted as trusted, or network flag assumed sufficient |
+| B. Fresh scaffold | New temp directory from public repo via current `npm create scaffold-hbar@latest --template owner/repo`; install, lint, typecheck, tests, build, boot, and expected routes; license/docs/manifest checked | Only workspace-local success or template copy with skipped install |
+| C. Hedera proof | Candidate itself submits fresh testnet HCS message; consensus receipt success and Mirror matching decoded message, payer, topic, sequence and network | Transaction ID only, wrong-network empty result, missing chunk or unsupported schema |
+| D. Signed session | Reference seller identity verified; browser WSS connects, receives valid frames, marks stale on halt, stops/cleans up; negative forgery/replay tests | Unsigned heartbeat displayed as verified, stale peer shown live, binary corruption |
+| E. Legacy interoperability | All targeted sellers through temporary tunnel use exact protocol and raw byte preservation, with independent parser/CRC as relevant; six-/nine-seller concurrency including `0.0.6490481` characterized | A successful brief connection treated as durable service, or unknown bytes rendered as JSON |
+| F. Safe commerce | Signed quote/invoice and budget checks; explicit user authorization; payout or escrow execution and refund to distinct accounts verified via Mirror/provider receipts and balance deltas | Auto-sign, registry `fee` used as price, schedule creation claimed paid, ERC20 units called HBAR, buyer-only refund assumed |
+| G. Mainnet pilot | Separate reviewable cost/deployment plan, signer and endpoints; limited pilot plus read-back, monitoring and recovery | Reuse of testnet IDs or keys, public testnet Mirror treated as production source, any mainnet write without separate release authorization |
+
+Gates A–D define the **minimum testnet template**. E and F are required before calling it a live seller commerce app. G is required before calling it mainnet-ready. A bounty submission can be honest with E/F explicitly experimental if the submitted artifact meets the bounty's actual criteria.
+
+## 7. Current status and unknowns
+
+Existing audit verifies real HCS and HBAR/EVM transactions, live data from all nine legacy sellers, valid raw ADS-B frames from two, and nine payouts to eight distinct sellers. Those are historical tests. The candidate now has fresh receipt-and-Mirror-verified HCS submissions, a real legacy seller's binary data displayed in the Next.js browser with CRC-valid aircraft frames, and distinct-account native-HBAR escrow release/refunds on testnet; its read-only app and Foundry contract tests pass locally. Clean Node 20/22 install, full dependency checks, build, typecheck, lint, tests and zero-finding npm audit passed for the current lockfile. Public CLI scaffold, durable gateway ownership, remote TLS/WSS deployment, signed seller terms, safe app checkout, signed spec-first session, public spec-first Agent Card, verified legacy price semantics, and mainnet setup still prevent a readiness claim. The ninth seller's repeated multi-seller stream loss is unresolved. See [AGENTS.md](../../../AGENTS.md) and [testnet evidence](../../testnet-evidence-2026-09-26.md) for current results.
