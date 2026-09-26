@@ -1,3 +1,4 @@
+import { currentCommerceSession, assertRefundReceiptHashes } from "./commerce-guards";
 import { createHash, randomBytes } from "node:crypto";
 import type Database from "better-sqlite3";
 import { Interface, computeAddress, getAddress, zeroPadValue } from "ethers";
@@ -353,7 +354,7 @@ export async function prepareCustomerFunding(session: CustomerSession, origin: U
   }
   return withFundingTable(db => db.transaction(() => {
     const commitTime = Math.floor(Date.now() / 1000);
-    if (session.expiresAt <= commitTime || Number(verified.terms.expiresAt) <= commitTime + 60) {
+    if (!currentCommerceSession(db, session, origin, commitTime) || Number(verified.terms.expiresAt) <= commitTime + 60) {
       throw new CommerceIssue("Seller quote or sign-in expired before funding preparation", 409);
     }
     const duplicate = db.prepare("SELECT id FROM customer_funding_intents WHERE quote_intent_id = ? OR terms_hash = ?")
@@ -425,7 +426,7 @@ export async function openCustomerFundingWallet(session: CustomerSession, origin
         current.wallet_opened_at !== null ||
         current.session_id !== session.sessionId || current.runtime_sha256 !== fresh.runtimeSha256 ||
         current.abi_json !== escrowAbiJson ||
-        session.expiresAt <= now || row.quote_expires_at <= now + 60) {
+        !currentCommerceSession(db, session, origin, now) || row.quote_expires_at <= now + 60) {
       throw new CommerceIssue("Funding wallet opening expired or was already attempted", 409);
     }
     db.prepare(`UPDATE customer_funding_intents
@@ -1005,7 +1006,7 @@ export async function prepareCustomerRefund(session: CustomerSession, origin: UR
   const { funding, escrowId, transaction, blockNumber } = await refundPreflight(session, origin, fundingId);
   return withRefundTable(db => db.transaction(() => {
     const commitTime = Math.floor(Date.now() / 1000);
-    if (session.expiresAt <= commitTime) throw new CommerceIssue("Sign in again before refunding", 401);
+    if (!currentCommerceSession(db, session, origin, commitTime)) throw new CommerceIssue("Sign in again before refunding", 401);
     const duplicate = db.prepare("SELECT id FROM customer_refund_intents WHERE funding_id = ?")
       .get(fundingId) as { id: string } | undefined;
     if (duplicate) throw new CommerceIssue("This escrow already has a refund attempt", 409);
@@ -1047,7 +1048,7 @@ export async function openCustomerRefundWallet(session: CustomerSession, origin:
     if (!current || current.state !== "prepared" || current.wallet_opened_at !== null ||
         current.wallet_open_count !== 0 ||
         current.abi_json !== fresh.funding.abi_json ||
-        session.expiresAt <= now) {
+        !currentCommerceSession(db, session, origin, now)) {
       throw new CommerceIssue("Refund wallet opening expired or was already attempted", 409);
     }
     db.prepare(`UPDATE customer_refund_intents
@@ -1086,7 +1087,7 @@ export async function retryCustomerRefundWallet(session: CustomerSession, origin
     if (!current || current.state !== "prepared" || current.wallet_open_count !== 1 ||
         current.wallet_opened_at === null || current.wallet_opened_at > commitTime - 900 ||
         current.transaction_hash || current.observed_hash || current.confirmed_hash ||
-        current.abi_json !== fresh.funding.abi_json || session.expiresAt <= commitTime) {
+        current.abi_json !== fresh.funding.abi_json || !currentCommerceSession(db, session, origin, commitTime)) {
       throw new CommerceIssue("Refund retry was already used or its chain state changed", 409);
     }
     db.prepare(`UPDATE customer_refund_intents SET wallet_opened_at = ?, wallet_open_count = 2,
@@ -1210,6 +1211,7 @@ export async function reconcileCustomerRefund(session: CustomerSession, origin: 
   if (!mirrorResponse.ok) throw new Error("Mirror refund receipt is unavailable");
   const mirror = await limitedJson(mirrorResponse) as Record<string, unknown>;
   if (!mirror || mirror.contract_id !== row.contract_id) throw new Error("Mirror refund contract ID mismatch");
+  assertRefundReceiptHashes(hash, receipt.transactionHash, mirror.hash);
   if (status !== 1n || mirror.result !== "SUCCESS") {
     if (status === 0n && mirror.result !== "SUCCESS") return mark(eventHash ? "conflict" : "failed");
     throw new Error("RPC and Mirror disagree about the buyer refund");

@@ -54,6 +54,8 @@ Write both environment files as root or the dedicated service user with a restri
 | `NEURON_SESSION_JOURNAL_FILE` | `/var/lib/neuron-customer-testnet/gateway-sessions.jsonl` |
 | `NEURON_GATEWAY_SESSION_CHECK_URL` | `http://127.0.0.1:3000/api/gateway-session` for customer v2 tickets; the gateway fails closed without a live app check |
 
+The current Go gateway refuses to start for a public listener or HTTPS app origin unless this private check URL is configured. In that mode it accepts only customer-bound v2 tickets; identity-free v1 tickets and the loopback static token are local test facilities. Stage the new app and route together before restarting the gateway, and retain the previous release for rollback.
+
 `app.env` needs the same `HEDERA_NETWORK`, seller account, app origin and session-token path, plus:
 
 | Variable | Value or constraint |

@@ -183,6 +183,36 @@ func TestTicketBindsSellerAndExpiry(t *testing.T) {
 	}
 }
 
+func TestPublicGatewayRejectsUnboundAndStaticTickets(t *testing.T) {
+	secret := []byte("01234567890123456789012345678901")
+	instanceID := "0123456789abcdef0123456789abcdef"
+	seller := "0.0.4318411"
+	expiry := strconv.FormatInt(time.Now().Unix()+45, 10)
+	nonce := "00112233445566778899aabbccddeeff"
+	mac := hmac.New(sha256.New, secret)
+	_, _ = mac.Write([]byte("v1:" + expiry + ":" + nonce + ":" + seller + ":" + instanceID))
+	v1 := "auth.v1." + expiry + "." + nonce + "." + hex.EncodeToString(mac.Sum(nil))
+	for _, gateway := range []*gateway{
+		{origin: "https://pilot.example", sellerAccount: seller, secret: secret, token: hex.EncodeToString(secret), instanceID: instanceID},
+		{origin: "http://localhost:3000", publicListener: true, sellerAccount: seller, secret: secret, token: hex.EncodeToString(secret), instanceID: instanceID},
+	} {
+		if gateway.validTicket(v1, time.Now()) {
+			t.Fatal("public gateway accepted an identity-free v1 ticket")
+		}
+		for _, candidate := range []string{v1, "auth." + gateway.token} {
+			r := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:9080/stream", nil)
+			r.Header.Set("Origin", gateway.origin)
+			r.Header.Set("Sec-WebSocket-Protocol", "neuron.v1, "+candidate)
+			r.RemoteAddr = "127.0.0.1:1234"
+			w := httptest.NewRecorder()
+			gateway.serveStream(w, r)
+			if w.Code != http.StatusUnauthorized || len(gateway.usedTickets) != 0 {
+				t.Fatalf("public stream accepted an unbound ticket: status=%d ticket=%q", w.Code, candidate)
+			}
+		}
+	}
+}
+
 func TestCustomerTicketBindsWalletSessionSellerAndGateway(t *testing.T) {
 	secret := []byte("01234567890123456789012345678901")
 	now := time.Unix(1_790_405_500, 0)

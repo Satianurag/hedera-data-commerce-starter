@@ -187,3 +187,23 @@ test("a provider that rejects event subscription cannot remain selected", () => 
   assert.throws(() => api.selectInjectedWallet("eip6963:throwing"), /cannot report/);
   assert.equal(api.walletSnapshot().selectedId, null);
 });
+
+test("WalletConnect selection is removed on chain change and cannot be revived by a stale provider", () => {
+  const { api } = fixture();
+  const first = provider();
+  api.registerWalletConnect(first);
+  const selected = api.selectedInjectedWallet();
+  assert.equal(selected.provider, first);
+  first.emit("chainChanged");
+  assert.throws(() => api.assertInjectedWallet(first, selected.revision), /changed/);
+  api.removeWalletConnect(first);
+  assert.equal(api.walletSnapshot().selectedId, null);
+  assert.equal(api.walletSnapshot().choices.length, 0);
+
+  const second = provider();
+  api.registerWalletConnect(second);
+  api.removeWalletConnect(first);
+  assert.equal(api.selectedInjectedWallet().provider, second);
+  api.removeWalletConnect(second);
+  assert.equal(api.walletSnapshot().selectedId, null);
+});
