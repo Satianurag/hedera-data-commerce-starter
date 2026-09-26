@@ -76,6 +76,9 @@ export default async function ServicePage({ params }: { params: Promise<{ accoun
         {latest && <div><dt>Sequence</dt><dd>{latest.sequenceNumber}</dd></div>}
       </dl>
       <div className="actions">
+        {config.network === "testnet" && device.accountId === process.env.NEURON_SELLER_ACCOUNT_ID &&
+          (process.env.NEURON_ENABLE_LOCAL_STREAM === "true" || process.env.NEURON_ENABLE_REMOTE_STREAM === "true") &&
+          <Link className="button" href={`/sessions?seller=${encodeURIComponent(device.accountId)}`}>Open this seller&apos;s stream</Link>}
         <Link className="button" href={`/evidence?topic=${device.stdoutTopicId}`}>Inspect HCS evidence</Link>
         <Link className="button secondary" href="/services">Back to services</Link>
       </div>
