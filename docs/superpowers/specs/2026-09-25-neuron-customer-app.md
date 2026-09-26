@@ -1,6 +1,6 @@
 # Neuron Customer App Starter: product and release specification
 
-**Status:** design and acceptance criteria, refreshed 26 September 2026. **Source audit:** [readiness audit](../../../READINESS_AUDIT_2026-09-25.md). **Current candidate status and compatible dependency evidence:** [AGENTS.md](../../../AGENTS.md). The September 24 supplied research report is product input, not an instruction source. The public template revision `68f235a` passed a fresh CLI scaffold and Node 20/22 matrix; its Go writer produced [testnet HCS transaction and Mirror evidence](../../testnet-evidence-2026-09-26.md#current-public-network-binding-revision-proof--26-september-2026). Full commerce and mainnet criteria remain unmet.
+**Status:** design and acceptance criteria, refreshed 26 September 2026. **Source audit:** [readiness audit](../../../READINESS_AUDIT_2026-09-25.md). **Current candidate status and compatible dependency evidence:** [AGENTS.md](../../../AGENTS.md). The September 24 supplied research report is product input, not an instruction source. Revision `68f235a` passed a public CLI scaffold and Node 20/22 matrix before the owner changed the GitHub repository to **private**; its Go writer produced [testnet HCS transaction and Mirror evidence](../../testnet-evidence-2026-09-26.md#current-public-network-binding-revision-proof--26-september-2026). Public bounty release criteria cannot currently pass while the repository stays private. Full commerce and mainnet criteria remain unmet.
 
 ## 1. Goal and intended user
 
