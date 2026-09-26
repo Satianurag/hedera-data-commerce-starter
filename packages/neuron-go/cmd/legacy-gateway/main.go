@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -41,6 +42,7 @@ type gateway struct {
 	origin        string
 	token         string
 	secret        []byte
+	instanceID    string
 	usedTickets   map[string]int64
 	bytes         uint64
 	chunks        uint64
@@ -48,6 +50,9 @@ type gateway struct {
 }
 
 func (g *gateway) validTicket(candidate string, now time.Time) bool {
+	if len(g.instanceID) != 32 {
+		return false
+	}
 	parts := strings.Split(candidate, ".")
 	if len(parts) != 5 || parts[0] != "auth" || parts[1] != "v1" || len(parts[3]) != 32 {
 		return false
@@ -64,7 +69,7 @@ func (g *gateway) validTicket(candidate string, now time.Time) bool {
 		return false
 	}
 	mac := hmac.New(sha256.New, g.secret)
-	_, _ = io.WriteString(mac, "v1:"+parts[2]+":"+parts[3]+":"+g.sellerAccount)
+	_, _ = io.WriteString(mac, "v1:"+parts[2]+":"+parts[3]+":"+g.sellerAccount+":"+g.instanceID)
 	return hmac.Equal(signature, mac.Sum(nil))
 }
 
@@ -196,11 +201,12 @@ func (g *gateway) serveHealth(w http.ResponseWriter, r *http.Request) {
 	response := struct {
 		Network          string `json:"network"`
 		SellerAccount    string `json:"sellerAccount"`
+		InstanceID       string `json:"instanceId"`
 		BrowserConnected bool   `json:"browserConnected"`
 		ReceivedChunks   uint64 `json:"receivedChunks"`
 		ReceivedBytes    uint64 `json:"receivedBytes"`
 		LastDataAt       string `json:"lastDataAt,omitempty"`
-	}{Network: "testnet", SellerAccount: g.sellerAccount, BrowserConnected: g.subscriber != nil, ReceivedChunks: g.chunks, ReceivedBytes: g.bytes}
+	}{Network: "testnet", SellerAccount: g.sellerAccount, InstanceID: g.instanceID, BrowserConnected: g.subscriber != nil, ReceivedChunks: g.chunks, ReceivedBytes: g.bytes}
 	if !g.lastDataAt.IsZero() {
 		response.LastDataAt = g.lastDataAt.UTC().Format(time.RFC3339Nano)
 	}
@@ -301,9 +307,13 @@ func run() error {
 		return errors.New("session token must be 32 random hex bytes")
 	}
 	secret, _ := hex.DecodeString(token)
+	instanceBytes := make([]byte, 16)
+	if _, err := rand.Read(instanceBytes); err != nil {
+		return errors.New("cannot create gateway instance ID")
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	g := &gateway{sellerAccount: sellerID, origin: origin, token: token, secret: secret}
+	g := &gateway{sellerAccount: sellerID, origin: origin, token: token, secret: secret, instanceID: hex.EncodeToString(instanceBytes)}
 	receiver, err := legacy.NewReceiver(ctx, p2pKey, sellerKey, uint16(portValue), g.onBytes)
 	if err != nil {
 		return err
