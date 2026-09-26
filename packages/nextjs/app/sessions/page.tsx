@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ModeSFramer } from "@neuron/hedera";
+import { ModeSFramer, aircraftStreamStatus, AircraftObservations, type AircraftObservation } from "@neuron/hedera";
 import { InjectedWalletPicker } from "../wallet/picker";
 import { selectedInjectedWallet, subscribeWalletInvalidation, type WalletProvider } from "../wallet/injected";
 
@@ -74,6 +74,10 @@ export default function SessionsPage() {
   const generation = useRef(0);
   const framer = useRef(new ModeSFramer());
   const aircraft = useRef(new Set<string>());
+  const observations = useRef(new AircraftObservations());
+  const lastValidAt = useRef(0);
+  const [aircraftRows, setAircraftRows] = useState<AircraftObservation[]>([]);
+  const [observationTime, setObservationTime] = useState(0);
   const counts = useRef<Counts>(emptyCounts());
   const lastByteAt = useRef(0);
   const openedAt = useRef(0);
@@ -153,10 +157,10 @@ export default function SessionsPage() {
         return;
       }
       setView({ ...counts.current });
+      setAircraftRows(observations.current.snapshot());
+      setObservationTime(Date.now());
       if (connection.current?.readyState === WebSocket.OPEN) {
-        const latest = lastByteAt.current || openedAt.current;
-        setStatus(Date.now() - latest > 15_000 ? "Stale: no bytes for 15 seconds" :
-          lastByteAt.current === 0 ? "Waiting for seller bytes" : "Streaming");
+        setStatus(aircraftStreamStatus(Date.now(), openedAt.current, lastByteAt.current, lastValidAt.current));
       }
     }, 1_000);
     return () => { clearInterval(timer); sessionGeneration.current++; activeConnection.current?.close(); };
@@ -198,6 +202,9 @@ export default function SessionsPage() {
     connection.current = null;
     framer.current.reset();
     aircraft.current.clear();
+    observations.current.reset();
+    lastValidAt.current = 0;
+    setAircraftRows([]);
     counts.current = emptyCounts();
     setView(emptyCounts());
     lastByteAt.current = 0;
@@ -381,6 +388,8 @@ export default function SessionsPage() {
             if (frame.downlinkFormat !== 17) continue;
             if (frame.crcValid) {
               counts.current.valid++;
+              lastValidAt.current = Date.now();
+              observations.current.observe(frame, lastValidAt.current);
               if (frame.icao24 && aircraft.current.size < 4096) aircraft.current.add(frame.icao24);
             } else counts.current.invalid++;
           }
@@ -460,5 +469,18 @@ export default function SessionsPage() {
       <div><dt>CRC-invalid DF17 frames</dt><dd>{view.invalid.toLocaleString()}</dd></div>
       <div><dt>Distinct ICAO24 addresses (up to 4,096)</dt><dd>{view.aircraft.toLocaleString()}</dd></div>
     </dl>
+    <h2>Observed aircraft</h2>
+    <p>Up to 256 recently observed ICAO24 addresses from this connection. Only CRC-valid DF17 frames update these records. Callsigns are decoded only from identification messages; other payloads are not interpreted. Receive times are browser observations, not sensor timestamps or proof of physical origin.</p>
+    {aircraftRows.length === 0 ? <p>No valid aircraft records received in this connection.</p> :
+      <div className="aircraft-table-scroll" role="region" aria-label="Observed aircraft table" tabIndex={0}><table>
+        <caption>Aircraft observed from seller {seller}; records reset on reconnect</caption>
+        <thead><tr><th scope="col">ICAO24</th><th scope="col">Callsign</th><th scope="col">Last received</th><th scope="col">Valid frames</th><th scope="col">Data status</th></tr></thead>
+        <tbody>{aircraftRows.map(row => <tr key={row.icao24}>
+          <td className="mono">{row.icao24}</td>
+          <td>{row.callsign ?? "Not received"}{row.callsignAt !== null && observationTime - row.callsignAt > 15_000 ? " (older identification)" : ""}</td>
+          <td>{new Date(row.lastSeenAt).toISOString()}</td><td>{row.validFrames.toLocaleString()}</td>
+          <td>{!connected ? "Disconnected" : observationTime - row.lastSeenAt > 15_000 ? "Stale" : "Fresh"}</td>
+        </tr>)}</tbody>
+      </table></div>}
   </section>;
 }

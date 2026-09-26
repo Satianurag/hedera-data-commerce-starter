@@ -36,3 +36,9 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .wallet-picker label { font-weight: 700; }
 .wallet-picker select { width: 100%; min-width: 0; border: 1px solid #9fb4b7; border-radius: .3rem; padding: .7rem; font: inherit; color: inherit; background: white; }
 .wallet-picker p { margin: 0; font-size: .9rem; }
+.aircraft-table-scroll { max-width: 100%; overflow-x: auto; margin: 1.5rem 0; }
+.aircraft-table-scroll:focus-visible { outline: 3px solid #b2721f; outline-offset: 3px; }
+.aircraft-table-scroll table { width: 100%; border-collapse: collapse; text-align: left; }
+.aircraft-table-scroll caption { text-align: left; padding-bottom: .75rem; }
+.aircraft-table-scroll th, .aircraft-table-scroll td { padding: .7rem; border-bottom: 1px solid #d3dfdf; vertical-align: top; }
+.aircraft-table-scroll td { overflow-wrap: anywhere; min-width: 6rem; }
