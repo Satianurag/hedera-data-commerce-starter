@@ -21,10 +21,13 @@ type Funding = {
   contractState: "funded" | "approved" | "paid" | "refunded" | null;
   transactionHash: string | null; reportedHash: string | null; observedHash: string | null;
   escrowId: string | null; termsHash: string;
-  contractId: string; contractAddress: string; sellerAddress: string;
+  contractId: string; contractAddress: string; sellerAccountId: string | null; sellerAddress: string;
   amountTinybar: string; quoteExpiresAt: number; refundAfter: number; preparedAt: number;
   walletOpenedAt: number | null; runtimeSha256: string | null; abiPinned: boolean;
   abandonedAt: number | null;
+  settlementHash: string | null; settlementMirrorTimestamp: string | null;
+  settlementRecipientAddress: string | null; settlementAmountTinybar: string | null;
+  settlementVerifiedAt: number | null;
 };
 type WalletTransaction = {
   from: string; to: string; value: string; data: string; gas: string; gasPrice: string; chainId: "0x128";
@@ -673,6 +676,7 @@ export default function CommerceClient({ network }: { network: "testnet" | "main
             funding.state === "conflict" ? "Hash or receipt conflict; operator review required" :
               "Outcome pending or uncertain"}</dd></div>
           <div><dt>Amount</dt><dd>{hbar(funding.amountTinybar)}</dd></div>
+          {funding.sellerAccountId && <div><dt>Seller account</dt><dd className="mono">{funding.sellerAccountId}</dd></div>}
           <div><dt>Seller recipient</dt><dd className="mono">{funding.sellerAddress}</dd></div>
           <div><dt>Escrow contract</dt><dd className="mono">{funding.contractId} · {funding.contractAddress}</dd></div>
           <div><dt>Terms hash</dt><dd className="mono">{funding.termsHash}</dd></div>
@@ -684,8 +688,19 @@ export default function CommerceClient({ network }: { network: "testnet" | "main
             <div><dt>Wallet-reported hash differs</dt><dd className="mono">{funding.reportedHash}</dd></div>}
           {funding.escrowId && <div><dt>Escrow ID</dt><dd>{funding.escrowId}</dd></div>}
           {funding.contractState && <div><dt>Contract reports</dt><dd>{funding.contractState === "paid" ?
-            "Seller withdrawal state; transfer needs independent verification" : funding.contractState}
+            "Seller withdrawal state" : funding.contractState}
             {funding.contractState === "approved" && " — this page has not verified delivery"}</dd></div>}
+          {funding.contractState === "paid" && <div><dt>Seller payment</dt><dd>{funding.settlementHash ?
+            "Verified: exact Released event, successful withdrawal and native HBAR transfer to seller" :
+            "Not yet independently verified; contract storage alone is insufficient"}</dd></div>}
+          {funding.settlementHash && <>
+            <div><dt>Seller withdrawal transaction</dt><dd className="mono">
+              <a href={`https://testnet.mirrornode.hedera.com/api/v1/contracts/results/${funding.settlementHash}`}
+                target="_blank" rel="noreferrer">{funding.settlementHash}</a></dd></div>
+            <div><dt>Verified transfer</dt><dd>{hbar(funding.settlementAmountTinybar ?? "0")} to <span
+              className="mono">{funding.settlementRecipientAddress}</span></dd></div>
+            <div><dt>Mirror consensus time</dt><dd className="mono">{funding.settlementMirrorTimestamp}</dd></div>
+          </>}
         </dl>
         {fundingTx && funding.state === "prepared" && funding.walletOpenedAt === null && <>
           <p>Wallet transaction prepared for <span className="mono">{fundingTx.to}</span>, value {hbar(funding.amountTinybar)}. The wallet will show its own confirmation before any HBAR moves.</p>
@@ -713,11 +728,15 @@ export default function CommerceClient({ network }: { network: "testnet" | "main
         {pendingHash && !funding.transactionHash && <button type="button" className="secondary"
           onClick={retryHashSave} disabled={fundingBusy}>Save returned transaction hash</button>}
         {(funding.state === "prepared" || funding.state === "submitted" || funding.state === "conflict" ||
-          funding.state === "failed") && <button type="button" className="secondary"
+          funding.state === "failed" || (funding.state === "executed" && funding.contractState === "paid" &&
+          !funding.settlementHash)) && <button type="button" className="secondary"
           onClick={() => { void refreshFunding(); }} disabled={fundingBusy}>Check chain outcome</button>}
-        {reconciliation === "unavailable" && <p role="alert">RPC or Mirror reconciliation is unavailable. This funding outcome remains uncertain; do not retry.</p>}
+        {reconciliation === "unavailable" && <p role="alert">RPC or Mirror reconciliation is unavailable. The displayed record is the last saved evidence; retry no payment transaction.</p>}
         {funding.state === "executed" && funding.contractState && <p>Escrow storage currently reports <strong>{funding.contractState === "paid" ?
-          "seller withdrawal recorded" : funding.contractState}</strong>. This is a contract state read, not a sensor-delivery or independently confirmed seller-transfer proof. The buyer can request a wallet-signed refund after the deadline if the escrow remains funded or approved.</p>}
+          "seller withdrawal state" : funding.contractState}</strong>. {funding.contractState === "paid" ?
+          (funding.settlementHash ? "The separate seller transfer evidence above was verified. This does not prove service quality." :
+            "The seller transfer has not yet been independently verified; check again after Mirror indexing.") :
+          "This state does not prove sensor delivery. The buyer can request a wallet-signed refund after the deadline while the escrow remains funded or approved."}</p>}
         {funding.state === "executed" && funding.contractState === "funded" &&
           approval?.fundingId !== funding.id && approvalEnabled &&
           nowSeconds + 120 < funding.refundAfter && <>
