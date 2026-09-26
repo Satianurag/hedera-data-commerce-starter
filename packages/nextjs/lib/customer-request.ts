@@ -194,9 +194,15 @@ function reserveRequest(session: CustomerSession, origin: URL, seller: string): 
 function updateRequest(id: string, state: CustomerRequestRecord["state"], payloadHash: string | null,
     transactionId: string | null, sequence: number | null): void {
   withCustomerDatabase(db => {
-    const changed = db.prepare("UPDATE customer_service_requests SET state = ?, updated_at = ?, payload_sha256 = ?, transaction_id = ?, topic_sequence = ? WHERE id = ?")
+    const changed = db.prepare("UPDATE customer_service_requests SET state = ?, updated_at = ?, payload_sha256 = ?, transaction_id = ?, topic_sequence = ? WHERE id = ? AND state != 'confirmed'")
       .run(state, Math.floor(Date.now() / 1000), payloadHash, transactionId, sequence, id);
-    if (changed.changes !== 1) throw new Error("Customer request journal entry is missing");
+    if (changed.changes !== 1) {
+      const current = db.prepare("SELECT state, payload_sha256, transaction_id FROM customer_service_requests WHERE id = ?")
+        .get(id) as { state: string; payload_sha256: string | null; transaction_id: string | null } | undefined;
+      if (current?.state === "confirmed" && current.payload_sha256 === payloadHash &&
+          (transactionId === null || current.transaction_id === transactionId)) return;
+      throw new Error("Customer request journal changed unexpectedly");
+    }
   });
 }
 

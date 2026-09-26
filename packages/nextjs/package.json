@@ -8,7 +8,8 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "lint": "eslint app",
-    "test": "node --test test/customer-auth.test.mjs"
+    "test": "node --test test/customer-auth.test.mjs",
+    "request:reconcile": "node scripts/reconcile-customer-request.mjs"
   },
   "dependencies": {
     "@neuron/hedera": "0.1.0",
