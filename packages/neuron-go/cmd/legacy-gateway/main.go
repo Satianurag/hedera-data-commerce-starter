@@ -68,14 +68,13 @@ func (g *gateway) validTicket(candidate string, now time.Time) bool {
 	return hmac.Equal(signature, mac.Sum(nil))
 }
 
-func (g *gateway) consumeTicket(candidate string, now time.Time) bool {
+// consumeTicketLocked reserves a valid ticket while g.mu is held.
+func (g *gateway) consumeTicketLocked(candidate string, now time.Time) bool {
 	if !g.validTicket(candidate, now) {
 		return false
 	}
 	parts := strings.Split(candidate, ".")
 	expiry, _ := strconv.ParseInt(parts[2], 10, 64)
-	g.mu.Lock()
-	defer g.mu.Unlock()
 	if g.usedTickets == nil {
 		g.usedTickets = make(map[string]int64)
 	}
@@ -118,13 +117,20 @@ func (g *gateway) serveStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	validToken := false
+	ticket := ""
+	remoteHost, _, _ := net.SplitHostPort(r.RemoteAddr)
+	remoteIP := net.ParseIP(remoteHost)
 	for _, part := range strings.Split(r.Header.Get("Sec-WebSocket-Protocol"), ",") {
 		candidate := strings.TrimSpace(part)
-		remoteHost, _, _ := net.SplitHostPort(r.RemoteAddr)
-		remoteIP := net.ParseIP(remoteHost)
 		localStatic := remoteIP != nil && remoteIP.IsLoopback() && len(candidate) == len(g.token)+5 && subtle.ConstantTimeCompare([]byte(candidate), []byte("auth."+g.token)) == 1
-		if localStatic || g.consumeTicket(candidate, time.Now()) {
+		if localStatic {
 			validToken = true
+			break
+		}
+		if g.validTicket(candidate, time.Now()) {
+			validToken = true
+			ticket = candidate
+			break
 		}
 	}
 	if !validToken {
@@ -137,13 +143,22 @@ func (g *gateway) serveStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session already has a browser subscriber", http.StatusConflict)
 		return
 	}
+	if ticket != "" && !g.consumeTicketLocked(ticket, time.Now()) {
+		g.mu.Unlock()
+		http.Error(w, "session token rejected", http.StatusUnauthorized)
+		return
+	}
 	sub := &subscriber{frames: make(chan []byte, 64), failure: make(chan struct{}, 1)}
 	g.subscriber = sub
 	g.mu.Unlock()
+	accepted := false
 	defer func() {
 		g.mu.Lock()
 		if g.subscriber == sub {
 			g.subscriber = nil
+		}
+		if !accepted && ticket != "" {
+			delete(g.usedTickets, strings.Split(ticket, ".")[3])
 		}
 		g.mu.Unlock()
 	}()
@@ -151,6 +166,7 @@ func (g *gateway) serveStream(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	accepted = true
 	defer conn.Close(websocket.StatusNormalClosure, "session ended")
 	ctx := conn.CloseRead(r.Context())
 	for {

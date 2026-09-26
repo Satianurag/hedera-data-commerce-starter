@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createPrivateKey } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+import { open, readFile, stat } from "node:fs/promises";
+import { isAbsolute } from "node:path";
 import { ethers } from "ethers";
 
 const mirror = "https://testnet.mirrornode.hedera.com";
@@ -40,7 +41,7 @@ async function confirmed(transaction, contractId) {
       if (result.result !== "SUCCESS" || result.contract_id !== contractId) {
         throw new Error(`Mirror contract result mismatch for ${transaction.hash}`);
       }
-      return transaction.hash;
+      return receipt;
     }
     await new Promise(resolve => setTimeout(resolve, 2_000));
   }
@@ -73,42 +74,82 @@ async function main() {
   const gasLimit = 400_000n;
   const feeCap = BigInt(process.env.HEDERA_MAX_FEE_TINYBAR ?? "0") * 10_000_000_000n;
   if (feeCap <= 0n || gasPrice * gasLimit > feeCap) throw new Error("test fee cap is insufficient");
+  const journalPath = process.env.HEDERA_TEST_JOURNAL_FILE;
+  if (!journalPath || !isAbsolute(journalPath)) throw new Error("HEDERA_TEST_JOURNAL_FILE must be an absolute owner-only path");
+  const journal = await open(journalPath, "a", 0o600);
+  const journalInfo = await journal.stat();
+  if (!journalInfo.isFile() || (journalInfo.mode & 0o077) !== 0) {
+    await journal.close();
+    throw new Error("test journal must be an owner-only regular file");
+  }
   const overrides = { gasLimit, gasPrice };
   const buyerContract = new ethers.Contract(address, artifact.abi, buyer.connect(provider));
   const sellerContract = new ethers.Contract(address, artifact.abi, seller.connect(provider));
   const transactions = [];
 
-  let id = await buyerContract.nextId();
-  const releaseId = id;
+  async function submit(label, transactionPromise) {
+    const transaction = await transactionPromise;
+    console.error(`${label} submitted: ${transaction.hash}`);
+    await journal.appendFile(`${JSON.stringify({ label, transaction: transaction.hash, contractId, network: "testnet" })}\n`);
+    await journal.sync();
+    const receipt = await confirmed(transaction, contractId);
+    transactions.push(transaction.hash);
+    return receipt;
+  }
+
+  async function fund(deadline, terms) {
+    const receipt = await submit("fund", buyerContract.fund(seller.address, deadline, terms, { ...overrides, value }));
+    const funded = receipt.logs.flatMap(log => {
+      if (log.address.toLowerCase() !== address.toLowerCase()) return [];
+      try {
+        const parsed = buyerContract.interface.parseLog(log);
+        return parsed?.name === "Funded" ? [parsed] : [];
+      } catch { return []; }
+    });
+    assert.equal(funded.length, 1, "fund transaction must emit exactly one Funded event");
+    const event = funded[0].args;
+    assert.equal(event.buyer.toLowerCase(), buyer.address.toLowerCase());
+    assert.equal(event.seller.toLowerCase(), seller.address.toLowerCase());
+    assert.equal(event.amount, tinybar);
+    assert.equal(event.refundAfter, BigInt(deadline));
+    assert.equal(event.termsHash.toLowerCase(), terms.toLowerCase());
+    const id = event.id;
+    await journal.appendFile(`${JSON.stringify({ label: "funded", transaction: receipt.hash, id: String(id), contractId, network: "testnet" })}\n`);
+    await journal.sync();
+    const escrow = await buyerContract.escrows(id);
+    assert.equal(escrow.buyer.toLowerCase(), buyer.address.toLowerCase());
+    assert.equal(escrow.seller.toLowerCase(), seller.address.toLowerCase());
+    assert.equal(escrow.amount, tinybar, "Hedera EVM tinybar conversion mismatch");
+    assert.equal(escrow.refundAfter, BigInt(deadline));
+    assert.equal(escrow.termsHash.toLowerCase(), terms.toLowerCase());
+    assert.equal(escrow.state, 1n);
+    return id;
+  }
+
   let deadline = (await provider.getBlock("latest")).timestamp + 90;
   const terms = ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify({ buyer: buyer.address, seller: seller.address, amountTinybar: String(tinybar), refundAfter: deadline, test: "native-hbar-release" })));
-  transactions.push(await confirmed(await buyerContract.fund(seller.address, deadline, terms, { ...overrides, value }), contractId));
-  assert.equal((await buyerContract.escrows(id)).amount, tinybar, "Hedera EVM tinybar conversion mismatch");
-  transactions.push(await confirmed(await buyerContract.approve(id, overrides), contractId));
-  transactions.push(await confirmed(await sellerContract.withdraw(id, seller.address, overrides), contractId));
-  assert.equal((await buyerContract.escrows(id)).state, 3n);
+  const releaseId = await fund(deadline, terms);
+  await submit("approve", buyerContract.approve(releaseId, overrides));
+  await submit("withdraw", sellerContract.withdraw(releaseId, seller.address, overrides));
+  assert.equal((await buyerContract.escrows(releaseId)).state, 3n);
 
-  id = await buyerContract.nextId();
-  const refundId = id;
   deadline = (await provider.getBlock("latest")).timestamp + 45;
   const refundTerms = ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify({ buyer: buyer.address, seller: seller.address, amountTinybar: String(tinybar), refundAfter: deadline, test: "native-hbar-refund" })));
-  transactions.push(await confirmed(await buyerContract.fund(seller.address, deadline, refundTerms, { ...overrides, value }), contractId));
-  assert.equal((await buyerContract.escrows(id)).amount, tinybar);
+  const refundId = await fund(deadline, refundTerms);
   while ((await provider.getBlock("latest")).timestamp < deadline) await new Promise(resolve => setTimeout(resolve, 2_000));
-  transactions.push(await confirmed(await buyerContract.refund(id, buyer.address, overrides), contractId));
-  assert.equal((await buyerContract.escrows(id)).state, 4n);
+  await submit("refund", buyerContract.refund(refundId, buyer.address, overrides));
+  assert.equal((await buyerContract.escrows(refundId)).state, 4n);
 
-  id = await buyerContract.nextId();
-  const abandonedApprovalId = id;
   deadline = (await provider.getBlock("latest")).timestamp + 45;
   const abandonedTerms = ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify({ buyer: buyer.address, seller: seller.address, amountTinybar: String(tinybar), refundAfter: deadline, test: "approved-but-unclaimed-refund" })));
-  transactions.push(await confirmed(await buyerContract.fund(seller.address, deadline, abandonedTerms, { ...overrides, value }), contractId));
-  transactions.push(await confirmed(await buyerContract.approve(id, overrides), contractId));
-  assert.equal((await buyerContract.escrows(id)).state, 2n);
+  const abandonedApprovalId = await fund(deadline, abandonedTerms);
+  await submit("approve", buyerContract.approve(abandonedApprovalId, overrides));
+  assert.equal((await buyerContract.escrows(abandonedApprovalId)).state, 2n);
   while ((await provider.getBlock("latest")).timestamp < deadline) await new Promise(resolve => setTimeout(resolve, 2_000));
-  transactions.push(await confirmed(await buyerContract.refund(id, buyer.address, overrides), contractId));
-  assert.equal((await buyerContract.escrows(id)).state, 4n);
+  await submit("refund", buyerContract.refund(abandonedApprovalId, buyer.address, overrides));
+  assert.equal((await buyerContract.escrows(abandonedApprovalId)).state, 4n);
   assert.equal(await provider.getBalance(address), 0n);
+  await journal.close();
   console.log(JSON.stringify({ network: "testnet", contractId, buyer: buyer.address, seller: seller.address, amountTinybar: String(tinybar), releaseId: String(releaseId), refundId: String(refundId), abandonedApprovalId: String(abandonedApprovalId), transactions }));
 }
 
