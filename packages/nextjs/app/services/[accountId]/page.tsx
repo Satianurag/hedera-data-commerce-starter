@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { checkLegacyDeviceBinding, getLatestTopicMessage, listLegacyDevices, networkConfigFromEnv } from "@neuron/hedera";
 import ServiceCheckUnavailable from "../unavailable";
+import { streamOptionSeller } from "../stream-option";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +10,7 @@ export default async function ServicePage({ params }: { params: Promise<{ accoun
   const { accountId } = await params;
   if (!/^0\.0\.[1-9]\d{0,18}$/.test(accountId)) notFound();
   const config = networkConfigFromEnv(process.env);
+  const streamConfigured = streamOptionSeller(config.network, process.env) === accountId;
   let devices: Awaited<ReturnType<typeof listLegacyDevices>>;
   try {
     devices = await listLegacyDevices(config);
@@ -60,7 +62,9 @@ export default async function ServicePage({ params }: { params: Promise<{ accoun
       <p className="eyebrow">Hedera {config.network} · Legacy directory</p>
       <h1>{(device.name.trim() || device.accountId).slice(0, 120)}</h1>
       <p>{device.deviceType.slice(0, 80)} · Account {device.accountId}</p>
-      <p role="status">Account and topic binding checked on Hedera {config.network}. Stream status: not checked on this page.</p>
+      <p role="status">Account and topic binding checked on Hedera {config.network}. {streamConfigured ?
+        "This seller is selected for this deployment's stream path; connection and data delivery are not checked here." :
+        "No stream path is selected for this seller in this deployment. You can inspect its public HCS evidence."}</p>
       <p className="notice">Mirror Node confirms that this directory key matches the account key and both topics exist. This does not turn the directory record into a signed Agent Card or prove that data is arriving.</p>
       {latest && !sellerPaidLatest && <p className="notice">The newest public-topic message was paid by another account. Its contents are not attributed to this seller.</p>}
       {!latest && <p role="status">The seller&apos;s stdout topic exists, but Mirror Node returned no messages.</p>}
@@ -76,8 +80,7 @@ export default async function ServicePage({ params }: { params: Promise<{ accoun
         {latest && <div><dt>Sequence</dt><dd>{latest.sequenceNumber}</dd></div>}
       </dl>
       <div className="actions">
-        {config.network === "testnet" && device.accountId === process.env.NEURON_SELLER_ACCOUNT_ID &&
-          (process.env.NEURON_ENABLE_LOCAL_STREAM === "true" || process.env.NEURON_ENABLE_REMOTE_STREAM === "true") &&
+        {streamConfigured &&
           <Link className="button" href={`/sessions?seller=${encodeURIComponent(device.accountId)}`}>Open this seller&apos;s stream</Link>}
         <Link className="button" href={`/evidence?topic=${device.stdoutTopicId}`}>Inspect HCS evidence</Link>
         <Link className="button secondary" href="/services">Back to services</Link>
