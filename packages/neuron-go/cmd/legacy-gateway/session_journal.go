@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -14,6 +15,7 @@ import (
 )
 
 const maxJournalBytes = 64 << 20
+const maxTransportEvidenceConnections = 32
 
 var connectionIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 var ownerAddressPattern = regexp.MustCompile(`^0x[0-9a-f]{40}$`)
@@ -47,6 +49,105 @@ type sessionJournal struct {
 	sellerAccount string
 	instanceID    string
 	active        map[string]sessionIdentity
+}
+
+// transportConnection records a completed server WebSocket write interval.
+// It does not establish that a browser consumed or understood the bytes.
+type transportConnection struct {
+	OpenedAt     string `json:"openedAt"`
+	ClosedAt     string `json:"closedAt"`
+	WrittenBytes uint64 `json:"writtenBytes"`
+}
+
+type transportEvidence struct {
+	Network                string                `json:"network"`
+	SellerAccount          string                `json:"sellerAccount"`
+	SellerPublicKey        string                `json:"sellerPublicKey"`
+	OwnerAddress           string                `json:"ownerAddress"`
+	CustomerSessionID      string                `json:"customerSessionId"`
+	TransportEvidenceOnly  bool                  `json:"transportEvidenceOnly"`
+	ClosedConnections      uint64                `json:"closedConnections"`
+	InterruptedConnections uint64                `json:"interruptedConnections"`
+	OpenConnections        uint64                `json:"openConnections"`
+	TotalWrittenBytes      uint64                `json:"totalWrittenBytes"`
+	Truncated              bool                  `json:"truncated"`
+	Connections            []transportConnection `json:"connections"`
+}
+
+// summarize reads a bounded, locked snapshot of the durable journal. An
+// interrupted connection has an unknown byte count and is never included in
+// the completed-write total. Only exact owner/session matches are returned.
+func (j *sessionJournal) summarize(ownerAddress, sessionID string) (transportEvidence, error) {
+	identity := sessionIdentity{ownerAddress, sessionID}
+	if !ownerAddressPattern.MatchString(ownerAddress) || !connectionIDPattern.MatchString(sessionID) ||
+		!validSessionIdentity(identity) {
+		return transportEvidence{}, errors.New("invalid customer identity")
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	info, err := j.file.Stat()
+	if err != nil || info.Size() < 0 || info.Size() > maxJournalBytes {
+		return transportEvidence{}, errors.New("session journal is unavailable or exceeds its read bound")
+	}
+	result := transportEvidence{Network: "testnet", SellerAccount: j.sellerAccount,
+		OwnerAddress: ownerAddress, CustomerSessionID: sessionID, TransportEvidenceOnly: true,
+		Connections: make([]transportConnection, 0)}
+	opened := make(map[string]sessionEvent)
+	scanner := bufio.NewScanner(io.NewSectionReader(j.file, 0, info.Size()))
+	scanner.Buffer(make([]byte, 4096), 4096)
+	for scanner.Scan() {
+		var event sessionEvent
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil ||
+			event.SellerAccount != j.sellerAccount || !connectionIDPattern.MatchString(event.ConnectionID) ||
+			!connectionIDPattern.MatchString(event.InstanceID) || !validSessionIdentity(sessionIdentity{event.OwnerAddress, event.SessionID}) {
+			return transportEvidence{}, errors.New("session journal has an invalid record")
+		}
+		if _, err := time.Parse(time.RFC3339Nano, event.At); err != nil {
+			return transportEvidence{}, errors.New("session journal has an invalid timestamp")
+		}
+		switch event.Event {
+		case "opened":
+			if _, exists := opened[event.ConnectionID]; exists || event.Bytes != 0 {
+				return transportEvidence{}, errors.New("session journal has a duplicate connection")
+			}
+			opened[event.ConnectionID] = event
+		case "closed", "interrupted":
+			started, exists := opened[event.ConnectionID]
+			if !exists || started.OwnerAddress != event.OwnerAddress || started.SessionID != event.SessionID {
+				return transportEvidence{}, errors.New("session journal has an unmatched close")
+			}
+			delete(opened, event.ConnectionID)
+			if event.OwnerAddress != ownerAddress || event.SessionID != sessionID {
+				continue
+			}
+			if event.Event == "interrupted" {
+				result.InterruptedConnections++
+				continue
+			}
+			if ^uint64(0)-result.TotalWrittenBytes < event.Bytes {
+				return transportEvidence{}, errors.New("session journal byte total overflows")
+			}
+			result.ClosedConnections++
+			result.TotalWrittenBytes += event.Bytes
+			if len(result.Connections) < maxTransportEvidenceConnections {
+				result.Connections = append(result.Connections, transportConnection{
+					OpenedAt: started.At, ClosedAt: event.At, WrittenBytes: event.Bytes})
+			} else {
+				result.Truncated = true
+			}
+		default:
+			return transportEvidence{}, errors.New("session journal has an unknown event")
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return transportEvidence{}, err
+	}
+	for _, event := range opened {
+		if event.OwnerAddress == ownerAddress && event.SessionID == sessionID {
+			result.OpenConnections++
+		}
+	}
+	return result, nil
 }
 
 func openSessionJournal(path, sellerAccount, instanceID string) (*sessionJournal, error) {
@@ -150,6 +251,10 @@ func (j *sessionJournal) recordOwned(event, id string, bytes uint64, ownerAddres
 		OwnerAddress: ownerAddress, SessionID: sessionID})
 	if err != nil {
 		return err
+	}
+	info, err := j.file.Stat()
+	if err != nil || info.Size() < 0 || info.Size()+int64(len(line))+1 > maxJournalBytes {
+		return errors.New("session journal has reached its 64 MiB write bound")
 	}
 	if _, err := j.file.Write(append(line, '\n')); err != nil {
 		return err

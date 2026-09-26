@@ -1,4 +1,4 @@
-export { networkConfigFromEnv } from "./network.js";
+export { networkConfigFromEnv, assertEvmRpcNetwork } from "./network.js";
 export type { HederaNetwork, NetworkConfig } from "./network.js";
 export { getMirrorAccount, getMirrorTopic } from "./mirror.js";
 export { getLatestTopicMessage, getTopicMessageBySequence } from "./hcs.js";

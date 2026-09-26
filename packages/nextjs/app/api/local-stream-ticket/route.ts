@@ -1,7 +1,9 @@
 import { createHmac, randomBytes } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
+import { dirname, isAbsolute } from "node:path";
 import { customerAuthOrigin, customerToken, getCustomerSession } from "../../../lib/customer-auth";
 import type { CustomerSession } from "../../../lib/customer-auth";
+import { gatewayServerEndpoint } from "../../../lib/gateway-endpoint";
 
 export const runtime = "nodejs";
 
@@ -18,7 +20,10 @@ export async function POST(request: Request): Promise<Response> {
     appOrigin = new URL(origin);
     const localOrigin = appOrigin.protocol === "http:" &&
       ["localhost", "127.0.0.1"].includes(appOrigin.hostname) && Boolean(appOrigin.port);
-    if (!localOrigin || appOrigin.origin !== origin ||
+    const publicOrigin = appOrigin.protocol === "https:" && !appOrigin.port;
+    if ((!localOrigin && !publicOrigin) ||
+        (publicOrigin && (!remoteEnabled || process.env.NEURON_ENABLE_CUSTOMER_AUTH !== "true")) ||
+        appOrigin.origin !== origin ||
         appOrigin.pathname !== "/" || appOrigin.search || appOrigin.hash ||
         appOrigin.username || appOrigin.password) throw new Error("Invalid app origin");
   } catch {
@@ -27,8 +32,8 @@ export async function POST(request: Request): Promise<Response> {
   if (request.headers.get("origin") !== origin) {
     return Response.json({ error: "Origin rejected" }, { status: 403 });
   }
-  // This route is a loopback-only test control. A copied Host header is not
-  // authentication, but rejecting mismatched hosts catches public proxy errors.
+  // A copied Host header is not authentication, but rejecting mismatched
+  // hosts catches public proxy errors before a ticket is issued.
   if (request.headers.get("host") !== appOrigin.host) {
     return Response.json({ error: "App host rejected" }, { status: 403 });
   }
@@ -67,13 +72,16 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: "Gateway URL is invalid" }, { status: 503 });
   }
   try {
-    const info = await stat(tokenPath);
-    if (!info.isFile() || (info.mode & 0o077) !== 0) throw new Error("Session secret must be owner-only");
+    if (!isAbsolute(tokenPath)) throw new Error("Session secret path must be absolute");
+    const [info, parent] = await Promise.all([lstat(tokenPath), lstat(dirname(tokenPath))]);
+    if (!info.isFile() || info.isSymbolicLink() || (info.mode & 0o077) !== 0 ||
+        !parent.isDirectory() || parent.isSymbolicLink() || (parent.mode & 0o077) !== 0 ||
+        (process.getuid && (info.uid !== process.getuid() || parent.uid !== process.getuid()))) {
+      throw new Error("Session secret and parent directory must be owner-only");
+    }
     const token = (await readFile(tokenPath, "utf8")).trim();
     if (!/^[0-9a-fA-F]{64}$/.test(token)) throw new Error("Session secret is invalid");
-    const healthUrl = new URL(url);
-    healthUrl.protocol = url.protocol === "wss:" ? "https:" : "http:";
-    healthUrl.pathname = "/health";
+    const healthUrl = gatewayServerEndpoint(url, "/health");
     const healthResponse = await fetch(healthUrl, { cache: "no-store", redirect: "error", signal: AbortSignal.timeout(3_000) });
     if (!healthResponse.ok) throw new Error("Gateway is unavailable");
     const health: unknown = await healthResponse.json();

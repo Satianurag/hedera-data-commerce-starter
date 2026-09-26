@@ -8,8 +8,67 @@ type Ticket = { url: string; sellerAccount: string; ticket: string };
 type CustomerSession = { sessionId: string; ownerAddress: string; expiresAt: number };
 type SellerRequest = { id: string; state: "reserved" | "submitting" | "uncertain" | "confirmed";
   sellerAccount: string; transactionId: string | null; payloadSha256: string | null; topicSequence: number | null };
-type WalletProvider = { request(args: { method: string; params?: unknown[] }): Promise<unknown> };
+type WalletProvider = {
+  request(args: { method: string; params?: unknown[] }): Promise<unknown>;
+  on?(event: "accountsChanged" | "chainChanged" | "disconnect", listener: (...args: unknown[]) => void): void;
+  removeListener?(event: "accountsChanged" | "chainChanged" | "disconnect", listener: (...args: unknown[]) => void): void;
+};
 const emptyCounts = (): Counts => ({ bytes: 0, chunks: 0, valid: 0, invalid: 0, aircraft: 0 });
+const isTestnetChain = (value: unknown): boolean =>
+  typeof value === "string" && /^0x[0-9a-f]+$/i.test(value) && BigInt(value) === 296n;
+const walletAddress = (value: unknown): string | null =>
+  Array.isArray(value) && typeof value[0] === "string" && /^0x[0-9a-f]{40}$/i.test(value[0]) ? value[0] : null;
+const isCustomerSession = (value: unknown): value is CustomerSession =>
+  Boolean(value && typeof value === "object" &&
+    typeof (value as Record<string, unknown>).sessionId === "string" &&
+    typeof (value as Record<string, unknown>).ownerAddress === "string" &&
+    /^0x[0-9a-f]{40}$/i.test((value as CustomerSession).ownerAddress) &&
+    typeof (value as Record<string, unknown>).expiresAt === "number" &&
+    Number.isFinite((value as CustomerSession).expiresAt));
+
+async function matchingWallet(provider: WalletProvider, ownerAddress: string): Promise<void> {
+  const [accounts, chain] = await Promise.all([
+    provider.request({ method: "eth_accounts" }), provider.request({ method: "eth_chainId" }),
+  ]);
+  if (!isTestnetChain(chain)) throw new Error("Switch your wallet to Hedera testnet (chain 296)");
+  if (walletAddress(accounts)?.toLowerCase() !== ownerAddress.toLowerCase()) {
+    throw new Error("The connected wallet no longer matches this browser session. Sign out and sign in again.");
+  }
+}
+
+function walletFailure(error: unknown): string {
+  if (error && typeof error === "object" && "code" in error && error.code === 4001) {
+    return "Wallet request was rejected. No payment was authorized.";
+  }
+  return error instanceof Error ? error.message : "Wallet request failed";
+}
+
+async function challengeFailure(response: Response): Promise<string> {
+  const fallback = "Could not create a sign-in challenge";
+  if (response.status !== 403 || !response.body) return fallback;
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > 512) { await reader.cancel(); return fallback; }
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
+    if (parsed && typeof parsed === "object" &&
+        (parsed as Record<string, unknown>).error === "Wallet is not enabled for this testnet pilot") {
+      return "Wallet is not enabled for this testnet pilot";
+    }
+  } catch { /* Treat malformed or interrupted error responses as generic failures. */ }
+  finally { reader.releaseLock(); }
+  return fallback;
+}
 
 export default function SessionsPage() {
   const connection = useRef<WebSocket | null>(null);
@@ -25,21 +84,28 @@ export default function SessionsPage() {
   const [auth, setAuth] = useState<"checking" | "disabled" | "required" | "signedIn" | "unavailable">("checking");
   const [authSession, setAuthSession] = useState<CustomerSession | null>(null);
   const [authMessage, setAuthMessage] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
+  const authBusyRef = useRef(false);
+  const authRevision = useRef(0);
+  const authSessionRef = useRef<CustomerSession | null>(null);
+  const watchedWallet = useRef<{ provider: WalletProvider; listener: (...args: unknown[]) => void } | null>(null);
   const [requestEnabled, setRequestEnabled] = useState(false);
   const [sellerRequest, setSellerRequest] = useState<SellerRequest | null>(null);
   const [requestMessage, setRequestMessage] = useState("");
   const [requestBusy, setRequestBusy] = useState(false);
   const [connected, setConnected] = useState(false);
 
-  async function refreshRequest() {
+  async function refreshRequest(revision = authRevision.current) {
     try {
       const response = await fetch("/api/customer-request", { cache: "no-store" });
+      if (revision !== authRevision.current) return;
       if (response.status === 404) { setRequestEnabled(false); return; }
       if (!response.ok) throw new Error("Seller request status is unavailable");
       const body = await response.json() as { request?: SellerRequest | null };
+      if (revision !== authRevision.current) return;
       setRequestEnabled(true);
       setSellerRequest(body.request ?? null);
-    } catch { setRequestMessage("Seller request status is unavailable"); }
+    } catch { if (revision === authRevision.current) setRequestMessage("Seller request status is unavailable"); }
   }
 
   useEffect(() => {
@@ -49,20 +115,42 @@ export default function SessionsPage() {
       if (response.status === 404) { setAuth("disabled"); return; }
       if (response.status === 401) { setAuth("required"); return; }
       if (!response.ok) { setAuth("unavailable"); return; }
-      const session = await response.json() as CustomerSession;
-      if (active && typeof session.ownerAddress === "string" && typeof session.sessionId === "string") {
+      const session: unknown = await response.json();
+      if (active && isCustomerSession(session)) {
+        authSessionRef.current = session;
         setAuthSession(session);
         setAuth("signedIn");
         void refreshRequest();
+        const provider = (window as Window & { ethereum?: WalletProvider }).ethereum;
+        if (provider) {
+          watchWallet(provider);
+          const revision = authRevision.current;
+          void matchingWallet(provider, session.ownerAddress).catch(error => {
+            if (active && revision === authRevision.current) setAuthMessage(walletFailure(error));
+          });
+        } else setAuthMessage("Browser session restored. Reconnect the same wallet before using it.");
       } else if (active) setAuth("unavailable");
     }).catch(() => { if (active) setAuth("unavailable"); });
     return () => { active = false; };
+  // Session restoration runs once; wallet changes are handled by the listener below.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     const sessionGeneration = generation;
     const activeConnection = connection;
     const timer = setInterval(() => {
+      if (authSessionRef.current && authSessionRef.current.expiresAt <= Date.now() / 1000) {
+        authRevision.current++;
+        authSessionRef.current = null;
+        setAuthSession(null);
+        setAuth("required");
+        setAuthMessage("Browser session expired. Sign in again to request seller data.");
+        setRequestEnabled(false);
+        setSellerRequest(null);
+        stop();
+        return;
+      }
       setView({ ...counts.current });
       if (connection.current?.readyState === WebSocket.OPEN) {
         const latest = lastByteAt.current || openedAt.current;
@@ -71,6 +159,22 @@ export default function SessionsPage() {
       }
     }, 1_000);
     return () => { clearInterval(timer); sessionGeneration.current++; activeConnection.current?.close(); };
+  }, []);
+
+  useEffect(() => {
+    const walletRevision = authRevision;
+    const provider = (window as Window & { ethereum?: WalletProvider }).ethereum;
+    if (provider) watchWallet(provider);
+    return () => {
+      const watched = watchedWallet.current;
+      if (watched) for (const event of ["accountsChanged", "chainChanged", "disconnect"] as const) {
+        watched.provider.removeListener?.(event, watched.listener);
+      }
+      watchedWallet.current = null;
+      walletRevision.current++;
+    };
+    // The provider listener is registered once and reads live session/revision refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function stop() {
@@ -88,57 +192,148 @@ export default function SessionsPage() {
     setStatus("Stopped");
   }
 
+  function watchWallet(provider: WalletProvider) {
+    if (watchedWallet.current?.provider === provider) return;
+    const previous = watchedWallet.current;
+    if (previous) for (const event of ["accountsChanged", "chainChanged", "disconnect"] as const) {
+      previous.provider.removeListener?.(event, previous.listener);
+    }
+    watchedWallet.current = null;
+    if (!provider.on || !provider.removeListener) return;
+    const listener = () => {
+      authRevision.current++;
+      if (authSessionRef.current) void signOut("Wallet account or network changed. Sign in again on Hedera testnet.");
+      else if (authBusyRef.current) setAuthMessage("Wallet changed during sign-in. Please try again.");
+    };
+    for (const event of ["accountsChanged", "chainChanged", "disconnect"] as const) provider.on(event, listener);
+    watchedWallet.current = { provider, listener };
+  }
+
+  async function ensureMatchingSession(): Promise<void> {
+    const session = authSessionRef.current;
+    const provider = (window as Window & { ethereum?: WalletProvider }).ethereum;
+    if (!session || !provider) throw new Error("Reconnect the wallet used for this browser session");
+    watchWallet(provider);
+    if (session.expiresAt <= Date.now() / 1000) {
+      throw new Error("Browser session expired. Sign out and sign in again.");
+    }
+    await matchingWallet(provider, session.ownerAddress);
+  }
+
+  async function discardUnexpectedSession(session: CustomerSession): Promise<void> {
+    try {
+      const response = await fetch("/api/customer-auth/logout", { method: "POST" });
+      if (!response.ok) throw new Error("Could not revoke the browser session");
+      setAuth("required");
+      setAuthMessage("Wallet changed during sign-in. Please sign in again.");
+    } catch {
+      authSessionRef.current = session;
+      setAuthSession(session);
+      setAuth("unavailable");
+      setAuthMessage("Wallet changed, but the browser session could not be revoked. Retry sign out.");
+    }
+  }
+
   async function signIn() {
+    if (authBusyRef.current) return;
+    authBusyRef.current = true;
+    setAuthBusy(true);
+    let revision = ++authRevision.current;
     setAuthMessage("Checking Hedera testnet wallet");
     try {
       const provider = (window as Window & { ethereum?: WalletProvider }).ethereum;
       if (!provider) throw new Error("An EVM wallet is required to sign in");
+      watchWallet(provider);
       const accounts = await provider.request({ method: "eth_requestAccounts" });
-      if (!Array.isArray(accounts) || typeof accounts[0] !== "string") throw new Error("Wallet did not return an account");
+      const address = walletAddress(accounts);
+      if (!address) throw new Error("Wallet did not return an EVM account");
       const chain = await provider.request({ method: "eth_chainId" });
-      if (chain !== "0x128") throw new Error("Switch your wallet to Hedera testnet (chain 296)");
+      if (!isTestnetChain(chain)) throw new Error("Switch your wallet to Hedera testnet (chain 296)");
+      // Granting account access can itself emit accountsChanged. Adopt that settled state.
+      await matchingWallet(provider, address);
+      revision = authRevision.current;
       const challengeResponse = await fetch("/api/customer-auth/challenge", { method: "POST",
-        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ address: accounts[0] }) });
-      if (!challengeResponse.ok) throw new Error("Could not create a sign-in challenge");
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ address }) });
+      if (!challengeResponse.ok) throw new Error(await challengeFailure(challengeResponse));
       const challenge: unknown = await challengeResponse.json();
       if (!challenge || typeof challenge !== "object" ||
           typeof (challenge as Record<string, unknown>).message !== "string" ||
           typeof (challenge as Record<string, unknown>).challengeId !== "string" ||
           (challenge as Record<string, unknown>).chainId !== 296) throw new Error("Sign-in challenge was malformed");
+      if (revision !== authRevision.current) return;
       setAuthMessage("Approve the sign-in message in your wallet");
       const signature = await provider.request({ method: "personal_sign",
-        params: [(challenge as { message: string }).message, accounts[0]] });
+        params: [(challenge as { message: string }).message, address] });
       if (typeof signature !== "string") throw new Error("Wallet did not return a signature");
+      await matchingWallet(provider, address);
+      if (revision !== authRevision.current) return;
       const verified = await fetch("/api/customer-auth/verify", { method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ challengeId: (challenge as { challengeId: string }).challengeId, signature }) });
       if (!verified.ok) throw new Error("Wallet sign-in was rejected");
-      const session = await verified.json() as CustomerSession;
-      if (typeof session.ownerAddress !== "string" || typeof session.sessionId !== "string") {
+      const session: unknown = await verified.json().catch(() => null);
+      if (!isCustomerSession(session)) {
+        try {
+          const response = await fetch("/api/customer-auth/logout", { method: "POST" });
+          if (!response.ok) throw new Error("Could not revoke the browser session");
+        } catch {
+          setAuth("unavailable");
+          setAuthMessage("Sign-in response was invalid and the browser session could not be revoked. Retry sign out.");
+          return;
+        }
         throw new Error("Sign-in response was malformed");
       }
+      if (revision !== authRevision.current) {
+        await discardUnexpectedSession(session);
+        return;
+      }
+      try { await matchingWallet(provider, session.ownerAddress); } catch {
+        await discardUnexpectedSession(session);
+        return;
+      }
+      if (revision !== authRevision.current) {
+        await discardUnexpectedSession(session);
+        return;
+      }
+      authSessionRef.current = session;
       setAuthSession(session);
       setAuth("signedIn");
       setAuthMessage("Signed in. No payment was authorized.");
       void refreshRequest();
     } catch (error) {
-      setAuthMessage(error instanceof Error ? error.message : "Wallet sign-in failed");
+      if (revision === authRevision.current) setAuthMessage(walletFailure(error));
+    } finally {
+      authBusyRef.current = false;
+      setAuthBusy(false);
+      if (revision !== authRevision.current && authSessionRef.current) {
+        void signOut("Wallet account or network changed. Sign in again on Hedera testnet.");
+      }
     }
   }
 
-  async function signOut() {
+  async function signOut(reason = "Signed out") {
+    if (authBusyRef.current) return;
+    authBusyRef.current = true;
+    setAuthBusy(true);
+    authRevision.current++;
     stop();
+    setAuth("checking");
+    setRequestEnabled(false);
+    setSellerRequest(null);
+    setRequestMessage("");
     try {
       const response = await fetch("/api/customer-auth/logout", { method: "POST" });
       if (!response.ok) throw new Error("Sign-out request was rejected");
+      authSessionRef.current = null;
       setAuthSession(null);
       setAuth("required");
-      setAuthMessage("Signed out");
-      setRequestEnabled(false);
-      setSellerRequest(null);
-      setRequestMessage("");
+      setAuthMessage(reason);
     } catch {
-      setAuthMessage("Could not sign out. Retry before leaving this browser.");
+      setAuth("unavailable");
+      setAuthMessage("Could not revoke the browser session. Retry sign out before using this app again.");
+    } finally {
+      authBusyRef.current = false;
+      setAuthBusy(false);
     }
   }
 
@@ -151,6 +346,8 @@ export default function SessionsPage() {
     const current = generation.current;
     setStatus("Checking testnet gateway");
     try {
+      if (auth === "signedIn") await ensureMatchingSession();
+      if (current !== generation.current) return;
       const response = await fetch("/api/local-stream-ticket", { method: "POST", cache: "no-store" });
       const body: unknown = await response.json();
       if (!response.ok || !body || typeof body !== "object") throw new Error("Testnet gateway is unavailable");
@@ -201,11 +398,16 @@ export default function SessionsPage() {
 
   async function requestSellerData() {
     if (!connected || !requestEnabled || requestBusy) return;
+    const revision = authRevision.current;
+    const connectionGeneration = generation.current;
     setRequestBusy(true);
     setRequestMessage("Submitting a testnet HCS service request. Keep this page open.");
     try {
+      await ensureMatchingSession();
+      if (revision !== authRevision.current || connectionGeneration !== generation.current) return;
       const response = await fetch("/api/customer-request", { method: "POST", cache: "no-store" });
       const body = await response.json() as { request?: SellerRequest; error?: string };
+      if (revision !== authRevision.current) return;
       if (!response.ok) throw new Error(body.error ?? "Seller request failed");
       if (!body.request) throw new Error("Seller request response was malformed");
       setSellerRequest(body.request);
@@ -213,8 +415,10 @@ export default function SessionsPage() {
         "HCS request confirmed. Waiting for seller bytes does not prove delivery." :
         "Request outcome needs operator reconciliation.");
     } catch (error) {
-      setRequestMessage(error instanceof Error ? error.message : "Seller request failed");
-      await refreshRequest();
+      if (revision === authRevision.current) {
+        setRequestMessage(error instanceof Error ? error.message : "Seller request failed");
+        await refreshRequest(revision);
+      }
     } finally { setRequestBusy(false); }
   }
 
@@ -223,17 +427,21 @@ export default function SessionsPage() {
     <h1>Watch seller data arrive</h1>
     <p>This view reads binary bytes from the configured legacy gateway. The gateway checks the seller&apos;s on-chain key. Valid Mode-S frames are counted only after CRC verification. The legacy stream is not a signed Agent Card or proof of physical sensor origin.</p>
     <p className="notice">This test view can submit a legacy service request on testnet when an operator explicitly enables it. The request does not sign an invoice, pay a seller, or confirm a purchase. Start the testnet gateway before connecting.</p>
+    {auth === "checking" && <p role="status">Checking your browser session…</p>}
+    {auth === "disabled" && <p>Wallet sign-in is disabled for this read-only or local configuration.</p>}
     {auth === "required" && <p>Sign in with a Hedera testnet EVM wallet. This authenticates your browser for one hour; the signature does not authorize a payment.</p>}
     {auth === "signedIn" && authSession && <p>Signed in as <span className="mono">{authSession.ownerAddress}</span>.</p>}
     {auth === "unavailable" && <p className="notice">Customer sign-in is unavailable. Live data cannot be connected from this browser.</p>}
-    {auth === "required" && <button type="button" className="secondary" onClick={signIn}>Sign in with wallet</button>}
-    {auth === "signedIn" && <button type="button" className="secondary" onClick={signOut}>Sign out</button>}
+    {auth === "required" && <button type="button" className="secondary" onClick={signIn} disabled={authBusy}>
+      {authBusy ? "Waiting for wallet" : "Sign in with wallet"}</button>}
+    {(authSession || auth === "unavailable") && <button type="button" className="secondary"
+      onClick={() => void signOut()} disabled={authBusy}>Sign out</button>}
     {authMessage && <p role="status" aria-live="polite">{authMessage}</p>}
     <div className="actions">
-      <button type="button" onClick={connect}>Connect</button>
+      <button type="button" onClick={connect} disabled={authBusy}>Connect</button>
       <button type="button" className="secondary" onClick={stop}>Stop</button>
       {auth === "signedIn" && requestEnabled && <button type="button" className="secondary"
-        onClick={requestSellerData} disabled={!connected || requestBusy || Boolean(sellerRequest)}>
+        onClick={requestSellerData} disabled={!connected || requestBusy || authBusy || Boolean(sellerRequest)}>
         {requestBusy ? "Submitting request" : "Request seller data"}
       </button>}
     </div>

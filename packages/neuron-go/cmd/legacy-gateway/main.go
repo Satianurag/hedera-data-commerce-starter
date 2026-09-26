@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"regexp"
@@ -31,6 +32,7 @@ import (
 var idPattern = regexp.MustCompile(`^0\.0\.[1-9]\d*$`)
 var ticketHex32 = regexp.MustCompile(`^[0-9a-f]{32}$`)
 var ticketHex40 = regexp.MustCompile(`^[0-9a-f]{40}$`)
+var sellerPublicKeyPattern = regexp.MustCompile(`^0[23][0-9a-f]{64}$`)
 
 type ticketDetails struct {
 	nonce     string
@@ -43,21 +45,28 @@ type subscriber struct {
 	failure   chan struct{}
 	sessionID string
 	owner     string
+	failed    bool // guarded by gateway.mu
+}
+
+type sellerStreamState interface {
+	ActiveSince() time.Time
 }
 
 type gateway struct {
-	mu            sync.Mutex
-	subscriber    *subscriber
-	sellerAccount string
-	origin        string
-	token         string
-	secret        []byte
-	instanceID    string
-	journal       *sessionJournal
-	usedTickets   map[string]int64
-	bytes         uint64
-	chunks        uint64
-	lastDataAt    time.Time
+	mu              sync.Mutex
+	subscriber      *subscriber
+	stream          sellerStreamState
+	sellerAccount   string
+	sellerPublicKey string
+	origin          string
+	token           string
+	secret          []byte
+	instanceID      string
+	journal         *sessionJournal
+	usedTickets     map[string]int64
+	bytes           uint64
+	chunks          uint64
+	lastDataAt      time.Time
 }
 
 func (g *gateway) validTicket(candidate string, now time.Time) bool {
@@ -123,23 +132,32 @@ func (g *gateway) consumeTicketLocked(candidate string, now time.Time) bool {
 }
 
 func (g *gateway) onBytes(chunk []byte) error {
+	if len(chunk) == 0 {
+		return nil
+	}
+	if len(chunk) > 32*1024 {
+		return errors.New("seller chunk exceeds receiver buffer limit")
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.bytes += uint64(len(chunk))
 	g.chunks++
 	g.lastDataAt = time.Now()
-	if g.subscriber == nil {
+	if g.subscriber == nil || g.subscriber.failed {
 		return nil
 	}
 	select {
-	case g.subscriber.frames <- chunk:
+	case g.subscriber.frames <- append([]byte(nil), chunk...):
 		return nil
 	default:
+		// A slow browser must not tear down the seller's QUIC stream. End only
+		// this subscriber and require a fresh ticket for a later reconnect.
+		g.subscriber.failed = true
 		select {
 		case g.subscriber.failure <- struct{}{}:
 		default:
 		}
-		return errors.New("browser subscriber cannot keep up with seller stream")
+		return nil
 	}
 }
 
@@ -227,6 +245,13 @@ func (g *gateway) serveStream(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := conn.CloseRead(r.Context())
 	for {
+		// Prefer the failure signal over queued data once backpressure occurs.
+		select {
+		case <-sub.failure:
+			_ = conn.Close(websocket.StatusInternalError, "stream backpressure")
+			return
+		default:
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -250,20 +275,36 @@ func (g *gateway) serveHealth(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method rejected", http.StatusMethodNotAllowed)
 		return
 	}
+	streamSince := time.Time{}
+	if g.stream != nil {
+		streamSince = g.stream.ActiveSince()
+	}
+	now := time.Now()
 	g.mu.Lock()
 	response := struct {
-		Network          string `json:"network"`
-		SellerAccount    string `json:"sellerAccount"`
-		InstanceID       string `json:"instanceId"`
-		BrowserConnected bool   `json:"browserConnected"`
-		ReceivedChunks   uint64 `json:"receivedChunks"`
-		ReceivedBytes    uint64 `json:"receivedBytes"`
-		LastDataAt       string `json:"lastDataAt,omitempty"`
-	}{Network: "testnet", SellerAccount: g.sellerAccount, InstanceID: g.instanceID, BrowserConnected: g.subscriber != nil, ReceivedChunks: g.chunks, ReceivedBytes: g.bytes}
+		Network               string `json:"network"`
+		SellerAccount         string `json:"sellerAccount"`
+		InstanceID            string `json:"instanceId"`
+		SellerStreamConnected bool   `json:"sellerStreamConnected"`
+		SellerDataFresh       bool   `json:"sellerDataFresh"`
+		SellerStreamSince     string `json:"sellerStreamSince,omitempty"`
+		BrowserConnected      bool   `json:"browserConnected"`
+		ReceivedChunks        uint64 `json:"receivedChunks"`
+		ReceivedBytes         uint64 `json:"receivedBytes"`
+		LastDataAt            string `json:"lastDataAt,omitempty"`
+	}{Network: "testnet", SellerAccount: g.sellerAccount, InstanceID: g.instanceID, BrowserConnected: g.subscriber != nil && !g.subscriber.failed, ReceivedChunks: g.chunks, ReceivedBytes: g.bytes}
 	if !g.lastDataAt.IsZero() {
 		response.LastDataAt = g.lastDataAt.UTC().Format(time.RFC3339Nano)
+		age := now.Sub(g.lastDataAt)
+		response.SellerDataFresh = !streamSince.IsZero() && g.lastDataAt.After(streamSince) && age >= 0 && age <= 15*time.Second
 	}
 	g.mu.Unlock()
+	if !streamSince.IsZero() && g.stream.ActiveSince() == streamSince {
+		response.SellerStreamConnected = true
+		response.SellerStreamSince = streamSince.UTC().Format(time.RFC3339Nano)
+	} else {
+		response.SellerDataFresh = false
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(response)
 }
@@ -291,12 +332,62 @@ func (g *gateway) serveSessionCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.mu.Lock()
-	connected := g.subscriber != nil && g.subscriber.sessionID == sessionID && g.subscriber.owner == owner
+	connected := g.subscriber != nil && !g.subscriber.failed && g.subscriber.sessionID == sessionID && g.subscriber.owner == owner
 	g.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(struct {
 		Connected bool `json:"connected"`
 	}{Connected: connected})
+}
+
+// serveTransportEvidence is for the colocated app server only. The journal
+// counts successful server WebSocket writes, not browser receipt or delivery
+// quality. Its HMAC has a separate domain from ticket and session-check MACs.
+func (g *gateway) serveTransportEvidence(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost || r.URL.RawQuery != "" || r.ContentLength != 0 {
+		http.Error(w, "transport evidence request rejected", http.StatusForbidden)
+		return
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	peer := net.ParseIP(host)
+	if err != nil || peer == nil || !peer.IsLoopback() {
+		http.Error(w, "transport evidence is internal only", http.StatusForbidden)
+		return
+	}
+	sessionID := r.Header.Get("X-Neuron-Session-ID")
+	owner := r.Header.Get("X-Neuron-Owner")
+	if !ticketHex32.MatchString(sessionID) || !ownerAddressPattern.MatchString(owner) {
+		http.Error(w, "transport evidence authorization rejected", http.StatusUnauthorized)
+		return
+	}
+	signature, err := hex.DecodeString(r.Header.Get("X-Neuron-Auth"))
+	if err != nil || len(signature) != sha256.Size {
+		http.Error(w, "transport evidence authorization rejected", http.StatusUnauthorized)
+		return
+	}
+	mac := hmac.New(sha256.New, g.secret)
+	_, _ = io.WriteString(mac, "transport-evidence:"+sessionID+":"+owner+":"+g.sellerAccount)
+	if !hmac.Equal(signature, mac.Sum(nil)) {
+		http.Error(w, "transport evidence authorization rejected", http.StatusUnauthorized)
+		return
+	}
+	if g.journal == nil {
+		http.Error(w, "transport evidence journal unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if !sellerPublicKeyPattern.MatchString(g.sellerPublicKey) {
+		http.Error(w, "seller public key unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	evidence, err := g.journal.summarize(owner, sessionID)
+	if err != nil {
+		http.Error(w, "transport evidence journal unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	evidence.SellerPublicKey = g.sellerPublicKey
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(evidence)
 }
 
 func getSellerPublicKey(id string) (string, error) {
@@ -329,7 +420,7 @@ func getSellerPublicKey(id string) (string, error) {
 	if _, err := legacy.SellerPeerID(record.Key.Key); err != nil {
 		return "", err
 	}
-	return record.Key.Key, nil
+	return strings.ToLower(record.Key.Key), nil
 }
 
 func run() error {
@@ -374,7 +465,14 @@ func run() error {
 		return errors.New("non-loopback gateway listener requires TLS certificate and key")
 	}
 	origin := os.Getenv("NEURON_APP_ORIGIN")
-	if !strings.HasPrefix(origin, "http://localhost:") && !strings.HasPrefix(origin, "http://127.0.0.1:") && !strings.HasPrefix(origin, "https://") {
+	parsedOrigin, err := url.Parse(origin)
+	if err != nil || parsedOrigin.Host == "" || parsedOrigin.User != nil ||
+		parsedOrigin.Path != "" || parsedOrigin.RawQuery != "" || parsedOrigin.Fragment != "" ||
+		parsedOrigin.ForceQuery || parsedOrigin.Opaque != "" || parsedOrigin.String() != origin ||
+		(parsedOrigin.Scheme != "https" &&
+			!(parsedOrigin.Scheme == "http" &&
+				(parsedOrigin.Hostname() == "localhost" || parsedOrigin.Hostname() == "127.0.0.1") &&
+				parsedOrigin.Port() != "")) {
 		return errors.New("NEURON_APP_ORIGIN must be an exact HTTP(S) origin")
 	}
 	tokenPath := os.Getenv("NEURON_SESSION_TOKEN_FILE")
@@ -397,7 +495,8 @@ func run() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	g := &gateway{sellerAccount: sellerID, origin: origin, token: token, secret: secret, instanceID: hex.EncodeToString(instanceBytes)}
+	g := &gateway{sellerAccount: sellerID, sellerPublicKey: sellerKey, origin: origin,
+		token: token, secret: secret, instanceID: hex.EncodeToString(instanceBytes)}
 	journalPath := os.Getenv("NEURON_SESSION_JOURNAL_FILE")
 	if journalPath == "" && !loopback {
 		return errors.New("non-loopback gateway requires NEURON_SESSION_JOURNAL_FILE")
@@ -414,10 +513,12 @@ func run() error {
 		return err
 	}
 	defer receiver.Close()
+	g.stream = receiver
 	mux := http.NewServeMux()
 	mux.HandleFunc("/stream", g.serveStream)
 	mux.HandleFunc("/health", g.serveHealth)
 	mux.HandleFunc("/session-check", g.serveSessionCheck)
+	mux.HandleFunc("/transport-evidence", g.serveTransportEvidence)
 	server := &http.Server{Addr: listen, Handler: mux, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
 	listener, err := net.Listen("tcp", listen)
 	if err != nil {

@@ -26,7 +26,6 @@ export type SellerQuote = Readonly<{
   refundAfter: string;
   escrowContractId: string;
   escrowAddress: string;
-  evidenceTopicId: string;
   nonce: string;
 }>;
 
@@ -46,14 +45,13 @@ export type QuoteExpectation = Readonly<{
   sessionId: string;
   escrowContractId: string;
   escrowAddress: string;
-  evidenceTopicId: string;
   maxSpendTinybar: bigint;
   nowSeconds: bigint;
 }>;
 
 const fields = ["type", "version", "network", "chainId", "sellerAccountId", "sellerAddress", "buyerAddress",
   "serviceId", "sessionId", "asset", "amountTinybar", "maxAmountTinybar", "durationSeconds", "issuedAt",
-  "expiresAt", "refundAfter", "escrowContractId", "escrowAddress", "evidenceTopicId", "nonce"];
+  "expiresAt", "refundAfter", "escrowContractId", "escrowAddress", "nonce"];
 const maxUint64 = (1n << 64n) - 1n;
 
 function decimal(value: unknown, name: string): bigint {
@@ -70,6 +68,12 @@ function address(value: unknown, name: string): string {
     if (normalized !== value) throw new Error("checksum mismatch");
     return normalized;
   } catch { throw new Error(`${name} must be an EIP-55 address`); }
+}
+
+function mirrorAddress(value: unknown): string {
+  if (typeof value !== "string") throw new Error("Mirror seller account has no EVM address");
+  try { return getAddress(value); }
+  catch { throw new Error("Mirror seller account has an invalid EVM address"); }
 }
 
 function parseQuote(payload: Uint8Array): SellerQuote {
@@ -96,7 +100,7 @@ export async function verifySignedSellerQuote(
     throw new Error("Quote HCS topic, sequence or payer does not match the seller");
   }
   for (const [name, id] of [["sellerAccountId", expected.sellerAccountId], ["sellerTopicId", expected.sellerTopicId],
-    ["escrowContractId", expected.escrowContractId], ["evidenceTopicId", expected.evidenceTopicId]] as const) {
+    ["escrowContractId", expected.escrowContractId]] as const) {
     assertHederaId(id, name);
   }
   if (expected.maxSpendTinybar <= 0n || expected.nowSeconds <= 0n) throw new Error("Buyer cap and clock must be positive");
@@ -110,14 +114,12 @@ export async function verifySignedSellerQuote(
   }
   if (quote.sellerAccountId !== expected.sellerAccountId || quote.serviceId !== expected.serviceId ||
       quote.sessionId !== expected.sessionId || quote.escrowContractId !== expected.escrowContractId ||
-      quote.evidenceTopicId !== expected.evidenceTopicId ||
       address(quote.escrowAddress, "escrowAddress") !== address(expected.escrowAddress, "expected escrowAddress") ||
       address(quote.buyerAddress, "buyerAddress") !== address(expected.buyerAddress, "expected buyerAddress")) {
     throw new Error("Seller quote does not match requested buyer, service, session or contract");
   }
   assertHederaId(quote.sellerAccountId, "sellerAccountId");
   assertHederaId(quote.escrowContractId, "escrowContractId");
-  assertHederaId(quote.evidenceTopicId, "evidenceTopicId");
   if (!/^[0-9a-f]{64}$/.test(quote.nonce)) throw new Error("Quote nonce must be 32 lowercase hex bytes");
   if (!quote.serviceId || quote.serviceId.length > 128 || !quote.sessionId || quote.sessionId.length > 128) {
     throw new Error("Service and session IDs must be bounded and nonempty");
@@ -144,7 +146,7 @@ export async function verifySignedSellerQuote(
   if (account.key?._type !== "ECDSA_SECP256K1" ||
       account.key.key.toLowerCase() !== envelope.compressedPublicKey.toLowerCase() ||
       typeof account.evm_address !== "string" ||
-      address(account.evm_address, "seller account EVM address") !== sellerAddress ||
+      mirrorAddress(account.evm_address) !== sellerAddress ||
       computeAddress(`0x${envelope.compressedPublicKey}`) !== sellerAddress ||
       envelope.senderAddress !== sellerAddress || sellerAddress === quote.buyerAddress) {
     throw new Error("Signed quote key or address does not match the current seller account");

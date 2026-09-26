@@ -2,6 +2,8 @@
 
 > **For agentic workers:** Checkboxes track *complete tasks*, so partial work remains unchecked. The latest user instruction explicitly resumes **coding the full product**. Keep the real-infrastructure, no-mocks, end-to-end objective; earlier small-slice/bounty gates are milestones, not the completion definition. Read [AGENTS.md](../../../AGENTS.md) for current evidence.
 
+> **Sequencing update (26 September):** the owner wants testing at the very last. Finish the remaining implementation first, then run the consolidated compatibility, edge-case, live-testnet and separate mainnet release checks. New HTTPS pilot code is currently unverified and does not change any pass status below.
+
 **Visibility update (26 September):** The owner requested GitHub privacy; `Satianurag/neuron-customer-app-scaffold-hbar` is verified **private**. Preserve this choice. All public CLI clone checks below describe historical revisions and are not a current anonymous reproducibility claim. Public bounty submission remains gated on an explicit later visibility decision.
 
 **Goal:** Build a reproducible Scaffold-HBAR customer application template that proves a signed Neuron service session and Hedera testnet evidence, then adds independently gated live-seller commerce and a separate mainnet release.
@@ -162,6 +164,8 @@ The public template must describe exactly which live data and payment flows pass
 ### Task 9: Terms, settlement and fund recovery
 
 **Files:** `commerce.ts`, checkout UI/server signer boundary, contract package payment extension only if chosen, tests and testnet evidence. **Interface:** quote/invoice binds network, buyer, seller/payee, shared account/contract, service/session, asset, amount in integer base units, duration, expiry, fee split and maximum spend; explicit user confirmation creates an authorized payment intent; receipt records actual executed transfer and balance deltas. **Checks:** wrong payee/amount/asset/decimals/nonce, replay, quote expiry, duplicate invoice, sender mismatch, unfunded shared account, insufficient allowance, RPC null/429/outage, schedule created but inner transfer absent, refund with missing signer, timeout, disputed or stalled session, failed delivery, distinct buyer/seller, payer balance after fees. For ERC20, use actual token decimals and independently test release and timeout refund; for native HBAR, do not claim escrow until a distinct, audited mechanism passes. **Pass:** no automatic sign; exact terms accepted by buyer; real testnet execution and recoverability independently verified. **Stop:** legacy registry `fee` shown as checkout price, an evidence hash treated as delivery oracle, or a scheduled transaction treated as unconditional escrow.
+
+**Funding preflight invariant:** a reviewed terms hash is not a transfer. Before offering a wallet funding transaction, recheck the live seller signature and exact quote, current seller account key, escrow contract ID/EVM address/runtime code, contract expiry and renewal horizon, and the exact timeout refund path. Require an independent wallet transaction confirmation and reconcile receipt plus Mirror execution before a **funded** label. Only a later seller withdrawal can support **paid**; gateway bytes alone are not delivery proof. The current funding/refund/approval source remains untested and its revised contract runtime is not deployed.
 
 - [ ] Pick one documented payment binding based on signed seller terms and an explicit refund model.
 - [ ] Add negative terms tests and caps before any testnet signer can authorize settlement.

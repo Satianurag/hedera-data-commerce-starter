@@ -3,6 +3,14 @@ pragma solidity ^0.8.26;
 
 import "../src/BuyerEscrow.sol";
 
+contract RejectingSeller {
+    function withdraw(BuyerEscrow escrow, uint256 id) external {
+        escrow.withdraw(id);
+    }
+
+    receive() external payable { revert("reject payout"); }
+}
+
 interface Vm {
     function deal(address who, uint256 balance) external;
     function prank(address sender) external;
@@ -19,35 +27,51 @@ contract BuyerEscrowTest {
     bytes32 private constant termsHash = keccak256("signed-terms-test-fixture");
 
     function setUp() public {
+        vm.warp(1000);
         escrow = new BuyerEscrow();
         vm.deal(address(this), amount * 10);
     }
 
     function fund() private returns (uint64 refundAfter) {
         refundAfter = uint64(block.timestamp + 3600);
-        uint256 id = escrow.fund{value: amount}(seller, refundAfter, termsHash);
+        uint256 id = escrow.fund{value: amount}(seller, uint64(block.timestamp + 300), refundAfter, termsHash);
         require(id == 1, "wrong escrow id");
     }
 
     function testFundingRequiresBoundedTerms() public {
         vm.expectRevert();
-        escrow.fund{value: amount}(address(this), uint64(block.timestamp + 3600), termsHash);
+        escrow.fund{value: amount}(address(this), uint64(block.timestamp + 300), uint64(block.timestamp + 3600), termsHash);
         vm.expectRevert();
-        escrow.fund{value: amount}(seller, uint64(block.timestamp + 3600), bytes32(0));
+        escrow.fund{value: amount}(seller, uint64(block.timestamp + 300), uint64(block.timestamp + 3600), bytes32(0));
         vm.expectRevert();
-        escrow.fund(seller, uint64(block.timestamp + 3600), termsHash);
+        escrow.fund(seller, uint64(block.timestamp + 300), uint64(block.timestamp + 3600), termsHash);
         vm.expectRevert();
-        escrow.fund{value: amount}(seller, uint64(block.timestamp), termsHash);
+        escrow.fund{value: amount}(seller, uint64(block.timestamp), uint64(block.timestamp), termsHash);
         vm.expectRevert();
-        escrow.fund{value: amount}(seller, uint64(block.timestamp + 31 days), termsHash);
+        escrow.fund{value: amount}(seller, uint64(block.timestamp + 300), uint64(block.timestamp + 31 days), termsHash);
+        vm.expectRevert();
+        escrow.fund{value: amount}(seller, uint64(block.timestamp - 1), uint64(block.timestamp + 3600), termsHash);
+        vm.expectRevert();
+        escrow.fund{value: amount}(seller, uint64(block.timestamp + 3600), uint64(block.timestamp + 3600), termsHash);
         require(escrow.nextId() == 1, "failed funding advanced id");
     }
 
     function testTermsHashCannotBeFundedTwice() public {
         fund();
+        require(escrow.usedTermsHash(address(this), termsHash), "buyer replay flag missing");
         vm.expectRevert();
-        escrow.fund{value: amount}(seller, uint64(block.timestamp + 7200), termsHash);
+        escrow.fund{value: amount}(seller, uint64(block.timestamp + 300), uint64(block.timestamp + 7200), termsHash);
         require(escrow.nextId() == 2, "duplicate funding advanced id");
+    }
+
+    function testOtherBuyerCannotBurnMySignedTermsHash() public {
+        vm.deal(stranger, amount);
+        vm.prank(stranger);
+        escrow.fund{value: amount}(seller, uint64(block.timestamp + 300), uint64(block.timestamp + 3600), termsHash);
+        require(escrow.usedTermsHash(stranger, termsHash), "other buyer replay flag missing");
+        require(!escrow.usedTermsHash(address(this), termsHash), "other buyer burned my terms");
+        escrow.fund{value: amount}(seller, uint64(block.timestamp + 300), uint64(block.timestamp + 3600), termsHash);
+        require(escrow.usedTermsHash(address(this), termsHash), "buyer funding did not consume terms");
     }
 
     function testBuyerApprovalAndSellerWithdrawal() public {
@@ -112,6 +136,21 @@ contract BuyerEscrowTest {
         vm.warp(due);
         vm.expectRevert();
         escrow.approve(1);
+    }
+
+    function testRejectedSellerPayoutRemainsRefundable() public {
+        RejectingSeller rejecting = new RejectingSeller();
+        uint64 due = uint64(block.timestamp + 3600);
+        escrow.fund{value: amount}(address(rejecting), uint64(block.timestamp + 300), due, termsHash);
+        escrow.approve(1);
+        vm.expectRevert();
+        rejecting.withdraw(escrow, 1);
+        (,,,,,, BuyerEscrow.State state) = escrow.escrows(1);
+        require(state == BuyerEscrow.State.Approved && address(escrow).balance == amount,
+            "failed payout changed custody");
+        vm.warp(due);
+        escrow.refund(1);
+        require(address(escrow).balance == 0, "failed payout blocked refund");
     }
 
     receive() external payable {}

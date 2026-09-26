@@ -1,0 +1,40 @@
+[Unit]
+Description=Neuron customer testnet Next.js app on loopback
+Wants=network-online.target neuron-testnet-gateway.service
+After=network-online.target neuron-testnet-gateway.service
+
+[Service]
+Type=simple
+User=neuron-testnet
+Group=neuron-testnet
+WorkingDirectory=__NEXT_SERVER_DIRECTORY__
+EnvironmentFile=/var/lib/neuron-customer-testnet/app.env
+Environment=NODE_ENV=production
+Environment=HOSTNAME=127.0.0.1
+Environment=PORT=3000
+Environment=HEDERA_NETWORK=testnet
+Environment=NODE_OPTIONS=--max-old-space-size=256
+ExecStart=__NODE_BINARY__ __NEXT_SERVER_JS__
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=20s
+UMask=0077
+StateDirectory=neuron-customer-testnet
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/neuron-customer-testnet
+MemoryMax=450M
+LimitNOFILE=4096
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictSUIDSGID=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

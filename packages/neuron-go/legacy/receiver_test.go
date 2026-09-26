@@ -55,13 +55,24 @@ func TestReceiverPreservesBytesFromExpectedSeller(t *testing.T) {
 	if _, err := stream.Write(payload[:3]); err != nil {
 		t.Fatal(err)
 	}
+	// libp2p may open a newly negotiated stream lazily on the first write.
+	// Keep it open while checking the receiver's active state and byte path.
+	var received []byte
+	select {
+	case chunk := <-chunks:
+		received = append(received, chunk...)
+	case <-ctx.Done():
+		t.Fatal("timed out awaiting first seller bytes")
+	}
+	if receiver.ActiveSince().IsZero() {
+		t.Fatal("seller stream was not active while forwarding bytes")
+	}
 	if _, err := stream.Write(payload[3:]); err != nil {
 		t.Fatal(err)
 	}
 	if err := stream.Close(); err != nil {
 		t.Fatal(err)
 	}
-	var received []byte
 	for len(received) < len(payload) {
 		select {
 		case chunk := <-chunks:
@@ -72,6 +83,13 @@ func TestReceiverPreservesBytesFromExpectedSeller(t *testing.T) {
 	}
 	if !bytes.Equal(received, payload) {
 		t.Fatalf("binary bytes changed: %x", received)
+	}
+	for !receiver.ActiveSince().IsZero() {
+		select {
+		case <-ctx.Done():
+			t.Fatal("closed seller stream remained active")
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 }
 
@@ -120,5 +138,8 @@ func TestReceiverRejectsDifferentPeer(t *testing.T) {
 	case <-chunks:
 		t.Fatal("receiver accepted bytes from another peer")
 	case <-time.After(300 * time.Millisecond):
+	}
+	if !receiver.ActiveSince().IsZero() {
+		t.Fatal("rejected peer was reported as active seller")
 	}
 }

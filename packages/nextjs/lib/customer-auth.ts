@@ -86,6 +86,25 @@ export function customerAuthOrigin(): URL | null {
   return origin;
 }
 
+export function customerAccessAllowed(origin: URL, claimedAddress: string): boolean {
+  if (origin.protocol === "http:" && ["localhost", "127.0.0.1"].includes(origin.hostname)) return true;
+  if (origin.protocol !== "https:") return false;
+  const configured = process.env.NEURON_ALLOWED_CUSTOMER_ADDRESSES;
+  if (!configured || configured.length > 2048) return false;
+  const entries = configured.split(",");
+  if (entries.length < 1 || entries.length > 20) return false;
+  let normalized: string;
+  try { normalized = getAddress(claimedAddress); } catch { return false; }
+  try {
+    return entries.map(entry => {
+      if (entry.trim() !== entry || !entry) throw new Error("Invalid allowlist entry");
+      const address = getAddress(entry);
+      if (address !== entry) throw new Error("Allowlist addresses must be checksummed");
+      return address;
+    }).includes(normalized);
+  } catch { return false; }
+}
+
 export function sameOrigin(request: Request, origin: URL): boolean {
   return request.headers.get("origin") === origin.origin && request.headers.get("host") === origin.host;
 }
@@ -121,6 +140,7 @@ export function issueCustomerChallenge(origin: URL, claimedAddress: string): Rea
 }> {
   const config = networkConfigFromEnv(process.env);
   if (config.network !== "testnet") throw new Error("Customer auth is testnet-only");
+  if (!customerAccessAllowed(origin, claimedAddress)) throw new InvalidCustomerRequest("Wallet is not enabled for this testnet pilot", 403);
   const ownerAddress = getAddress(claimedAddress);
   const now = Math.floor(Date.now() / 1000);
   const challengeId = randomBytes(16).toString("hex");
@@ -157,6 +177,7 @@ export function verifyCustomerChallenge(origin: URL, challengeId: string, signat
       throw new InvalidCustomerChallenge("Invalid wallet signature");
     }
     if (ownerAddress !== challenge.owner_address) throw new InvalidCustomerChallenge("Signature does not match the requested wallet");
+    if (!customerAccessAllowed(origin, ownerAddress)) throw new InvalidCustomerChallenge("Wallet is no longer enabled for this testnet pilot");
     const token = randomBytes(32).toString("hex");
     const tokenHash = createHash("sha256").update(token).digest("hex");
     const sessionId = randomBytes(16).toString("hex");
@@ -182,7 +203,8 @@ export function getCustomerSession(origin: URL, token: string | undefined): Cust
   return withCustomerDatabase(db => {
     const row = db.prepare("SELECT session_id, owner_address, expires_at FROM customer_sessions WHERE token_hash = ? AND origin = ? AND revoked_at IS NULL AND expires_at > ?")
       .get(hash, origin.origin, now) as { session_id: string; owner_address: string; expires_at: number } | undefined;
-    return row ? { sessionId: row.session_id, ownerAddress: row.owner_address, expiresAt: row.expires_at } : null;
+    return row && customerAccessAllowed(origin, row.owner_address) ?
+      { sessionId: row.session_id, ownerAddress: row.owner_address, expiresAt: row.expires_at } : null;
   });
 }
 

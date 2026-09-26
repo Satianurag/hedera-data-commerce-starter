@@ -3,7 +3,13 @@ dist/
 .next/
 .env
 .env.*
+*.env
+*.env.*
 !.env.example
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
 coverage/
 artifacts/
 cache/
