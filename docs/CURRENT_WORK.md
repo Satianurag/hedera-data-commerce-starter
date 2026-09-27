@@ -19,17 +19,21 @@ The first reference service delivers a real owner-selected document. In this che
 | Work | Current status | Completion evidence |
 | --- | --- | --- |
 | Existing template, live legacy stream, HCS/Mirror, native-HBAR mechanics | Implemented; historical candidate evidence recorded | Preserve current working components; relevant regression checks at final gate |
-| Reference source preparation and server bridge | Implemented and built; live recovery fix in progress | Actual HCS negotiation passed; exact-byte QUIC and settlement await completed live purchase |
-| Browser reference service and payment actions | Implemented; real wallet create and exact allowance passed | No-hash provider failure exposed a concrete retry gap; persist nonce and support explicit same-nonce retry |
+| Reference source preparation and server bridge | Implemented; actual paid and refund API flows passed | Original signed HCS messages, exact-byte QUIC delivery, invoice, ERC20 seller receipt and deadline refund verified |
+| Browser reference service and payment actions | Implemented; real wallet create and exact allowance passed | Nonce recovery fixed at `c265128`; complete installed-wallet purchase remains pending |
 | Distinct identities and actual testnet deployment/configuration | Passed actual preflight | Real topic creation, bytecode, account keys, token metadata and source hash verified |
-| Complete paid-delivery path | Live pass in progress | First attempt reached escrow 4 and allowance; deposit failed without a hash, so no delivery/payment pass yet |
-| Failure/refund path | Implemented; live pass pending | Timeout with no release must return the actual escrow balance to the buyer |
+| Complete paid-delivery path | Passed through authenticated application API | Escrow 6/release 1; exact 29,099-byte document downloaded, seller received exactly 0.01 NTT and escrow emptied |
+| Failure/refund path | Passed through authenticated application API | Escrow 5 returned exactly 0.01 NTT after its real deadline; buyer balance increased, seller balance stayed unchanged and escrow emptied |
 | Browser wallet | MetaMask 13.50.0 connect/sign/create/allowance passed | Disposable testnet wallet; full purchase remains pending. Other installed wallet paths are separate |
-| Final candidate checks | Code gate passed at `5bf0dc3`; focused recovery gate pending | Production build, type/lint, 43 shared + 8 contract + 22 Next tests, zero npm audit and zero reachable Go findings |
-| Hosted update | Access recovery pending | Current artifact deployed and HTTPS flow verified; existing OCI artifact is older |
+| Final candidate checks | Code gate passed at `5bf0dc3`; focused recovery gate passed at `c265128` | Production build, type/lint, 43 shared + 8 contract + 22 Next tests, zero npm audit and zero reachable Go findings; recovery revision also passed five frontend/four Go tests and rebuilt |
+| Hosted update | Access recovery pending | Needs current artifact deployment and HTTPS flow verification; existing OCI artifact is older |
 | Mainnet | Separate milestone; not implemented end to end | Network-specific resources, compatible seller binding, provider, bounded cost/transaction manifest, release authorization and pilot |
 
 The current live evidence, including failed attempts, is in [the 27 September record](reference-evidence-2026-09-27.md). Preserve session `1bce886b-a0a7-4ae9-9e08-a74bb0b4a5e2` (escrow 4): its original provider-failed deposit has no recorded nonce/hash, and must not be silently reset. At the independent observation its escrow had no funds and buyer retained all 0.05 NTT.
+
+The complete paid/refund API run used source `c265128348b97fe86bb0ff143345496481a3c15d` and normal challenge/signature authentication with a fresh controlled testnet signer. It delivered the real file, paid the seller, then refunded the separate no-delivery escrow after its ten-minute deadline. Buyer gas including the 0.05 NTT mint totaled **0.86683231 HBAR**, below the **1.2 HBAR** bound. All buyer transactions and both seller settlement transactions were independently matched through RPC and official Mirror. These completed results need no repeat merely to obtain a differently owned seller.
+
+Remaining live gates are the complete installed-wallet purchase, the updated hosted deployment and the separate mainnet milestone. The owner reported creating MetaMask Account 2, but native UI input still has window-availability failures; this does not establish a second browser purchase. The CLI API proof does not count as that browser gate. Other installed wallet support retains its own verification requirements.
 
 ## Invariants
 
