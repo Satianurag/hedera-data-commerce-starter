@@ -1,6 +1,6 @@
 # Reference integration evidence — 27 September 2026
 
-This records the new reference document service separately from historical legacy aviation streaming and the starter-specific native-HBAR escrow. Real paid delivery and timeout refund passed through the authenticated application API. Installed-browser full checkout remains pending; unlisted outcomes have not passed.
+This records the new reference document service separately from historical legacy aviation streaming and the starter-specific native-HBAR escrow. Real paid delivery and timeout refund passed through the authenticated application API and installed MetaMask on testnet. The final browser purchase used the bounded gas correction and paid the distinct seller. Unlisted wallet, hosted deployment and mainnet outcomes have not passed.
 
 ## Source and runtime
 
@@ -123,10 +123,73 @@ Session `d1559164-eaab-488a-8263-8f0a48e619d3` agreed a **0.01 NTT** purchase wi
 
 At **07:10:33 UTC**, Account 2's latest/pending nonce was **2**, token balance **0.02 NTT**, HBAR balance **0.76215873**, and allowance **0.01 NTT**. Escrow 7 had **zero deposited funds**. Native control continued timing out after a tool reset; the owner was asked only to bring the main testing window forward. The saved allowance must be reconciled before a deposit is considered. These observations establish another installed-wallet sign-in/create/allowance result, not a completed browser purchase. The independent snapshot is retained outside the repo as `api-proof/browser-independent.json`.
 
+## Restart and bounded runtime migration
+
+After the owner closed the applications and requested a restart, a read-only recovery snapshot at **07:29:34 UTC** confirmed that Account 2's financial state was unchanged. Latest/pending nonce was **2**, allowance **0.01 NTT**, token balance **0.02 NTT**, and HBAR balance **0.76215873**. Escrow 7 remained empty in state **0** (`Created`), with no pending release and its **07:15:57 UTC** deadline already passed. The official Mirror account-transaction query after the previous snapshot's block timestamp `1790493022` returned no transactions and no further page. The saved nonce-1 approval still matched the exact call and successful RPC/Mirror receipt. Sanitized evidence is `api-proof/browser-recovery-snapshot-20260927.json` outside the repository.
+
+The restored bridge first reconciled that already executed approval hash without submitting a chain transaction. All four existing reference sessions were retained. Because those sessions exhausted the configured lifetime cap, an audited **copy** migration at **07:33:15 UTC** raised `maxSessions` from **4** to **5** for one additional browser attempt. Its private destination is `reference-2026-09-27/browser-session-five`, containing the new `bridge-config.json`, copied `sessions` directory and `migration-manifest.json`.
+
+The manifest records `originalBytesVerifiedUnchanged: true`; each of the four copied journals has `onlyConfigHashChanged: true`. Original source/received documents and delivery proof were preserved. The old configuration fingerprint was `e186c31e65e37d92a19a5df08e247c1093881fec272f1564ba3f0989b6aa422a`; the new fingerprint is `fe4ca1096431798a8d6c5950de4b4ae29426c9d776a7c9c583bf14a68d9ecc6b`. The source revision remains `c265128348b97fe86bb0ff143345496481a3c15d`, and the bridge binary remains SHA-256 `4fdf5aa76ba5fffd06076961e31ae05a103bcec19b411cd9d6822483d460de59`. The migration itself made no product change or chain write and did not alter any agreement deadline or transaction history.
+
+Next was restored at the same origin with the existing customer database. The same testing browser profile and Account 2 were reopened and unlocked; the app's authenticated identity persisted. One fresh signed-agreement request was then initiated through the actual browser. That session delivered the real file and ultimately **refunded** the buyer, as recorded below. The successful API seller-payment evidence above remains separate; this browser session did not pay the seller.
+
+## Browser document delivery and refund gas finding
+
+The fresh installed-MetaMask session `02265960-6ffb-4b93-adc4-e6b41f9cd87c` reached **invoiced**, escrow **8**, release **1**, at **0.01 NTT**. The app confirmed the actual browser transactions below:
+
+| Browser action | Buyer nonce | Transaction hash |
+| --- | --- | --- |
+| Create escrow 8 | 2 | `0x2101681eb62f86549f31ec07294b76e45d8d53100375a20e6a168c4cacde096d` |
+| Exact allowance | 3 | `0xa2a70bc08314903ffb7a54babecaf0491b062049c345b39ddd27fbfd1804ba82` |
+| Deposit | 4 | `0xe51592628aafebb5385d1f0690a46b48b9fb711ff1967f4182ea0604e3fb8a5d` |
+
+Actual browser download produced `service-document.md`, **29,099 bytes**, SHA-256 `cf915d1268763dadfabf3dc9902899a41eee852c3be871fcf5738a1001ade413`, matching the real offered document. The saved session records receipt at **07:39:08 UTC** and delivery evidence hash `0x7cf926797e4c94cea1c0c63253bd51d327f5225a7ff1085321968b0bc9db2fb2`. Its seller request-release transaction is `0x6ac0e4a374307cefa65e7d1256739ba1b3148f2bbdcfae430881e3ed586a885d`.
+
+The agreement deadline was **1790495039** (**07:43:59 UTC**). The bridge's existing 30-second cutoff made buyer payment approval unavailable before that deadline; no buyer release approval or seller withdrawal was sent. A separate browser refund was submitted after timeout at nonce **5**, hash `0x156df324a64ec23e2e1f14468e9863561bc8ae9d0e7bb625d1ed8c73f38429ac`.
+
+That refund **reverted**. Independent RPC receipt status was **0**, and official Mirror reported `CONTRACT_REVERT_EXECUTED` at `1790495082.473503104`. Error selector `0x1425ea42` decodes to the deployed contract's `FailedInnerCall()`. The transaction gas limit was **64,563**, with **64,549** gas consumed and an effective gas price of **1,090,000,000,000 weibars**; the receipt-derived fee was **0.07035841 HBAR**. No token transfer occurred.
+
+A bounded read-only comparison reproduced the cause: `eth_estimateGas` returned **64,563**; the exact same buyer, contract and `claimRefund(8)` calldata with that gas limit reverted with the same selector, while **100,000 gas** returned successfully. The unbuffered estimate was insufficient for this execution. At that observation the buyer nonce was **6**, balance **0.35568465 HBAR** and **0.01 NTT**; escrow 8 still held **0.01 NTT**, with a pending release of the same amount and state `Funded`. These results do not indicate a timeout or buyer-identity rejection.
+
+The failed nonce-5 transaction was recorded by the app as reverted. A new, explicit MetaMask refund at nonce **6**, with its gas limit manually set to **100,000**, **succeeded**: [`0x8b19f38f2ff6a03a0a8383b6520d2605e197d0631a8e374b8ba0be6bb7c79116`](https://testnet.mirrornode.hedera.com/api/v1/contracts/results/0x8b19f38f2ff6a03a0a8383b6520d2605e197d0631a8e374b8ba0be6bb7c79116). The RPC transaction independently confirmed that exact gas limit; receipt status was **1**, gas used **53,802** and fee **0.05864418 HBAR**. Official Mirror recorded `SUCCESS` at `1790495337.533449160`. Both the token `Transfer` and escrow `RefundClaimed` events bind **0.01 NTT** to the correct buyer and escrow **8**.
+
+The final independent snapshot at **07:51:21 UTC** matched app state `refunded`: escrow balance and pending-release total were **0**, escrow state was `Refunded`, the buyer held **0.02 NTT**, allowance was **0**, and its latest nonce was **7**. After the separately authorized **1 HBAR** top-up, its HBAR balance was **1.29704047**. Buyer network fees for this browser session, including the failed refund, totaled **0.46511826 HBAR**; the seller's request-release fee was separate. The release record remains `Pending` in this upstream contract, while refunded escrow state and zero balance prevent its withdrawal. No seller payment occurred for this session.
+
+The original failed receipt is retained. Sanitized receipts, balances, events and diagnostics are stored outside the repository as `api-proof/browser-session-eight-independent.json` and `api-proof/browser-refund-gas-diagnostic.json`. This proves actual installed-wallet funding, file download and timeout refund with a manual gas correction. The subsequent bounded gas-preparation code and its browser payment proof are separate; this recovery is not evidence that the newly automated gas preparation ran.
+
+## Bounded sixth session and buffered browser gas
+
+After escrow 8's confirmed refund, a second audited copy migration at **07:50:32 UTC** raised `maxSessions` from **5** to **6**, under `reference-2026-09-27/browser-session-six`. Its manifest preserves all five previous journals and source/delivery files byte-for-byte in the original directory; copied journals change only the configuration fingerprint. The new fingerprint is `a3290a8d38e8a05701eebc0424689f628f4fd7d56a80becf8a04b81fcbf237e9`. The same bridge binary and original bridge source revision were retained. Refund duration remains **600 seconds**; no old deadline or chain history was changed and the migration submitted no transaction.
+
+Frontend source `803eaf7` adds wallet gas preparation before opening an operation: `ceil(estimate × 1.5) + 10,000`, capped at **400,000 gas**, with explicit provider gas price, a **0.5 HBAR** maximum fee and a pending-balance check. It preserves the stored transaction nonce, sender, recipient, calldata, zero value and chain **296**. Eight focused checks, TypeScript, lint and the production build passed; independent static review found no blocking issue. These checks do not substitute for executing the corrected browser path.
+
+One fresh installed-MetaMask signed agreement began at **07:54:47 UTC**, session `1e25e7cd-0d70-4929-b9c5-ea26426f57a4`, deadline **1790496287** (**08:04:47 UTC**). Its completed browser payment is recorded below.
+
+## Completed installed-MetaMask payment
+
+The actual browser completed session `1e25e7cd-0d70-4929-b9c5-ea26426f57a4`, escrow **9**, release **1**, using frontend revision `803eaf7e9482d1dc2d54419ee06c8deb978d613b` and the pinned reference bridge. Account 2 created the escrow, approved exactly **0.01 NTT**, deposited it, received and downloaded the seller's real document, confirmed inspection, approved the release in MetaMask and initiated seller withdrawal through the app. Every purchase mutation was driven through the actual browser UI. A native-control timeout after deposit was recovered by reconciling the saved hash through the UI; it was not resent.
+
+| Action | Buyer nonce | Transaction hash |
+| --- | --- | --- |
+| Create escrow 9 | 7 | `0xebfd9452f3b7a12e650eed679f23800069c96fa1330278542aece2ecfc90dbfb` |
+| Exact token allowance | 8 | `0xdf04e7f042046e572e6e0271cfa7449936a53edf0fa181d6b9c5fce9ee6078fb` |
+| Deposit | 9 | `0x1b1a7edb6528018a83ed17f6ebe624cdec7890c1a78e1c2f849a8f831f057a8d` |
+| Seller release request | — | `0xe44e05c4e25e7bbee6c870ff080a206da7eb8266328df118f5841376cf2c9ae0` |
+| Buyer release approval | 10 | `0x90d1a7fff1a60bff4d7aeafccbfcf6ba75a573c36fe2e46cf23633e674ca4be4` |
+| Seller withdrawal | — | `0x5031eaa0b3a132705b61cf62f9630e46543514d17eea2feb79eb7b3298526196` |
+
+All six receipts independently returned RPC status **1** and official Mirror **SUCCESS**. The exact expected sender, contract call and chain **296** matched. Each of the four buyer transactions respected the new **400,000 gas** and **0.5 HBAR maximum fee** bounds. Actual buyer fees totaled **0.41500660 HBAR**; the seller's two transaction fees totaled **0.20788698 HBAR**. [The successful withdrawal receipt](https://testnet.mirrornode.hedera.com/api/v1/contracts/results/0x5031eaa0b3a132705b61cf62f9630e46543514d17eea2feb79eb7b3298526196) and its exact token-transfer event bind payment to the configured seller.
+
+The independent final state matched app status `paid`: escrow **9** was `Released`, release **1** was `Withdrawn`, escrow token balance and pending release total were **0**, and buyer allowance was **0**. Relative to the preceding independent snapshot, buyer tokens decreased by exactly **0.01 NTT** to **0.01 NTT**, and seller tokens increased by exactly **0.01 NTT** to **0.02 NTT**. Buyer HBAR was **0.88203387**, exactly its previous **1.29704047** less the four buyer fees. The agreement hash `0x11657a7355ad568bb44daefbe2615a64064b57904ebf8e73010d4d82aa347a5d`, delivery evidence hash `0x9f7049ccb39a6e7f2c5238876a27d3e8ce9db1cb65fb7591f44cb93663028023`, recipient and amount matched the on-chain records.
+
+Six signed HCS messages were independently reassembled from official Mirror, matched against their exact SHA-256 values, signature-recovered to the expected sender and compared to that identity's current Mirror account key. The operator payer was checked separately. Seller topic `0.0.10740354` final sequences **16**, **17**, **18** contain the service request, escrow notice and invoice acknowledgement; buyer topic `0.0.10740349` final sequences **10**, **11**, **12** contain the seller acceptance, connection setup and invoice. All six corresponding HCS submissions succeeded and bound the same request ID.
+
+The browser downloaded `service-document (1).md`, independently checked at **29,099 bytes** with SHA-256 `cf915d1268763dadfabf3dc9902899a41eee852c3be871fcf5738a1001ade413`; its download modification time was **1790496167.6505415**. Sanitized verification summary is outside the repository at `api-proof/browser-paid-independent.json`. This establishes the configured self-operated reference seller's actual installed-wallet testnet payment flow; it does not establish unrelated sellers, other wallet extensions, hosted reference delivery or mainnet writes.
+
 ## Completion gates
 
 - Installed MetaMask testnet connection and signature: **passed**.
-- Real document delivery, invoice, payment and seller token receipt: **passed through the authenticated app API**; installed-wallet full checkout is separate and pending.
-- Independently funded buyer timeout refund: **passed through the authenticated app API**, after the real deadline, with exact buyer return and zero remaining escrow balance.
-- Final consolidated candidate code checks: **passed** as detailed above; live commerce remains a separate gate.
+- Real document delivery, invoice, payment and seller token receipt: **passed through the authenticated app API and the actual installed-MetaMask browser flow**.
+- Independently funded buyer timeout refund: **passed through the authenticated app API and installed MetaMask**, after the real deadline, with exact buyer return and zero remaining escrow balance. The browser run includes a recorded gas-estimation failure followed by an explicitly approved, successful manual-gas recovery.
+- Final consolidated candidate code checks and focused nonce/gas correction checks: **passed** as detailed above; the real API and installed-MetaMask commerce results are recorded separately.
 - Updated hosted deployment, other installed wallets and mainnet writes: **not established by this run**.
