@@ -38,7 +38,6 @@ jobs:
     timeout-minutes: 30
     env:
       GOTOOLCHAIN: go1.26.8
-      NEURON_REFERENCE_CACHE: ${{ runner.temp }}/neuron-reference
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -56,6 +55,8 @@ jobs:
           go test ./...
           go vet ./...
       - name: Build pinned reference adapter
+        env:
+          NEURON_REFERENCE_CACHE: ${{ runner.temp }}/neuron-reference
         run: node packages/neuron-reference/scripts/prepare.mjs
       - name: Check reference overlay
         working-directory: ${{ runner.temp }}/neuron-reference/source/impl/golang
