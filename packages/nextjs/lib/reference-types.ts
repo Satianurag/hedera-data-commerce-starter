@@ -10,7 +10,7 @@ export type ReferenceConfig = {
   escrowAddress: string; limits: { refundAfterSeconds: number }; identityNote: string;
 };
 export type ReferenceWalletAction = { kind: ReferenceKind; label: string; chainId: 296;
-  to: string; data: string; value: "0x0" };
+  to: string; data: string; value: "0x0"; nonce?: string };
 export type ReferenceMessage = { kind: string; topicId: string; sequenceNumber: string; transactionId: string;
   sha256: string; mirrorVerified: boolean; senderAddress: string; payload: Record<string, unknown> };
 export type ReferenceSession = {
@@ -70,6 +70,19 @@ export function referenceKind(value: unknown): ReferenceKind {
   if (!referenceKinds.includes(value as ReferenceKind)) return fail();
   return value as ReferenceKind;
 }
+export function referenceWalletFailure(error: unknown): string {
+  if (!error || typeof error !== "object") return "The operation did not complete. Refresh before retrying.";
+  const details = error as { code?: unknown; message?: unknown };
+  if (details.code === 4001) return "This wallet request was rejected. Any earlier submitted transaction still needs reconciliation.";
+  const message = typeof details.message === "string" ? details.message.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 320).trim() : "";
+  const code = Number.isSafeInteger(details.code) ? `Wallet error ${details.code}: ` : "";
+  return message ? `${code}${message}` : `${code}The operation did not complete. Refresh before retrying.`;
+}
+function transactionNonce(value: unknown): string {
+  const checked = text(value, 18);
+  if (!/^0x(?:0|[1-9a-f][0-9a-f]{0,15})$/.test(checked)) return fail();
+  return checked;
+}
 function array(value: unknown, limit: number): unknown[] {
   if (!Array.isArray(value) || value.length > limit) return fail();
   return value;
@@ -96,11 +109,13 @@ function walletAction(value: unknown): ReferenceWalletAction {
   if (row.chainId !== 296 || row.value !== "0x0") return fail();
   const data = text(row.data, 2048);
   if (!/^0x(?:[0-9a-fA-F]{2})+$/.test(data)) return fail();
-  return { kind: referenceKind(row.kind), label: text(row.label), chainId: 296, to: address(row.to), data, value: "0x0" };
+  return { kind: referenceKind(row.kind), label: text(row.label), chainId: 296, to: address(row.to), data, value: "0x0",
+    ...(row.nonce === undefined ? {} : { nonce: transactionNonce(row.nonce) }) };
 }
 
 export function validateReferenceTransaction(action: ReferenceWalletAction, session: ReferenceSession,
     config: ReferenceConfig): void {
+  if (action.nonce !== undefined) transactionNonce(action.nonce);
   let target = config.escrowAddress, data: string;
   switch (action.kind) {
     case "create":

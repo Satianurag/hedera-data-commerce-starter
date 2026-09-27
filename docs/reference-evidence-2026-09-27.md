@@ -43,6 +43,20 @@ Under Node **22.23.3**, the consolidated production build and test command passe
 
 The pinned bridge built successfully, its two focused tests and `go vet` passed, and `govulncheck` found **zero reachable or imported-package vulnerabilities**. One finding exists in an unused required module. The built binary SHA-256 is `2e7cfa3902b8363dbfd46868c0fe4e301174aa1eb7f3fa3e083b5f5dc0a3d327`. Read-only startup preflight verified chain, deployed bytecode, account keys, seller alias, topic metadata, token metadata and source hash against the actual configured testnet resources.
 
+## First installed-wallet attempt and recovery finding
+
+Product source was committed as `5bf0dc3`. The first real browser session was `1bce886b-a0a7-4ae9-9e08-a74bb0b4a5e2`:
+
+- Signed request: seller inbox `0.0.10740354`, final sequence **2**, transaction `0.0.10725146@1790490482.754784782` (two chunks).
+- Signed acceptance: buyer inbox `0.0.10740349`, sequence **1**, transaction `0.0.10725146@1790490488.222607536`.
+- Actual wallet-created upstream escrow **4**: `0x93c1d2ae8ea1541c3ba78136cc4c55eef5cf5bcd1fda191ee9caaeaa6fd1037e`, independently successful through RPC and Mirror.
+- Actual wallet-approved allowance exactly **0.01 NTT**: `0x3b84497039284042ba746802e57f3dc4940667aa0dd76583ac819e1da2f855af`, independently successful through RPC and Mirror.
+- Deposit failed in MetaMask without returning a hash. The app retained `wallet-open` and did not automatically resend. Independent observation found latest/pending account nonce **2**, no confirmed deposit, escrow balance **0**, buyer **0.05 NTT**, seller **0 NTT**, and exact allowance **0.01 NTT**. MetaMask's failure detail subsequently displayed: `RPC 0x128 Custom eth_sendRawTransaction: RPC endpoint returned HTTP client error.` The exact HTTP status/root cause was not exposed; a later read-only estimate of the same deposit succeeded. Do not attribute it to insufficient funds without evidence.
+
+This revealed a real recovery gap: a provider failure without a hash left the intent blocked, and a plain-object provider error lost its useful message in the UI. The follow-up fix records the exact nonce before wallet opening and prepares explicit retries of that same nonce and calldata. It must be checked before a new commerce pass. The original nonce-unknown journal is preserved; it is not silently cleared or retroactively marked verified.
+
+The disposable wallet became Hedera account **0.0.10740507**. Initial funding was **0.5 testnet HBAR** and **0.05 NTT**, with separately verified transfer/mint receipts. A later native SDK top-up added **1.0 testnet HBAR** through [`0.0.10725146@1790490961.919637309`](https://testnet.mirrornode.hedera.com/api/v1/transactions/0.0.10725146-1790490961-919637309), costing **0.00128158 HBAR**. The initial EVM alias-creation transfer cost **0.66256413 HBAR**; mint cost **0.05592136 HBAR**. All are testnet units.
+
 ## Completion gates
 
 - Installed MetaMask testnet connection and signature: **passed**.

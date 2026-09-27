@@ -12,7 +12,7 @@ const compiled = ts.transpileModule(source, { compilerOptions: {
 } }).outputText;
 const context = { exports: {}, require: createRequire(import.meta.url) };
 vm.runInNewContext(compiled, context);
-const { parseReferenceConfig, parseReferenceSession, validateReferenceTransaction, referenceRevision } = context.exports;
+const { parseReferenceConfig, parseReferenceSession, referenceWalletFailure, validateReferenceTransaction, referenceRevision } = context.exports;
 const buyer = "0x1111111111111111111111111111111111111111";
 const seller = "0x2222222222222222222222222222222222222222";
 const token = "0x3333333333333333333333333333333333333333";
@@ -71,4 +71,24 @@ test("unconfirmed HCS records remain visible without claiming a Mirror sequence"
   assert.equal(parseReferenceSession(pending, config, buyer).messages[0].mirrorVerified, false);
   assert.throws(() => parseReferenceSession({ ...pending,
     messages: [{ ...pending.messages[0], mirrorVerified: true }] }, config, buyer));
+});
+
+test("wallet nonce is preserved exactly and malformed nonce encodings are rejected", () => {
+  const approve = action("token-approve", token, abi.encodeFunctionData("approve", [escrow, "1000"]));
+  for (const nonce of ["0x0", "0x2", "0xffffffffffffffff"]) {
+    const parsed = parseReferenceSession({ ...session, walletActions: [{ ...approve, nonce }] }, config, buyer);
+    assert.equal(parsed.walletActions[0].nonce, nonce);
+  }
+  for (const nonce of [2, "2", "0x02", "0x-1", "0x10000000000000000", "0xg"]) {
+    assert.throws(() => parseReferenceSession({ ...session, walletActions: [{ ...approve, nonce }] }, config, buyer));
+  }
+});
+
+test("plain-object wallet errors expose only bounded message and numeric code", () => {
+  assert.equal(referenceWalletFailure({ code: -32603, message: "Deposit gas estimate failed", data: { secret: "not displayed" } }),
+    "Wallet error -32603: Deposit gas estimate failed");
+  const text = referenceWalletFailure({ code: -32603, message: "failure\n" + "x".repeat(1000) });
+  assert.ok(text.length < 350);
+  assert.ok(!text.includes("\n"));
+  assert.ok(referenceWalletFailure({ code: 4001 }).includes("earlier submitted transaction"));
 });

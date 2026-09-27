@@ -5,7 +5,7 @@ import { formatUnits } from "ethers";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { InjectedWalletPicker } from "../wallet/picker";
 import { assertInjectedWallet, selectedInjectedWallet, subscribeWalletInvalidation } from "../wallet/injected";
-import { parseReferenceConfig, parseReferenceSession, validateReferenceTransaction,
+import { parseReferenceConfig, parseReferenceSession, referenceWalletFailure, validateReferenceTransaction,
   type ReferenceConfig, type ReferenceKind, type ReferenceSession } from "../../lib/reference-types";
 
 type BrowserSession = { ownerAddress: string; sessionId: string; expiresAt: number };
@@ -18,10 +18,6 @@ function savedHash(key: string): string | null {
 }
 function saveHash(key: string, value: string): void {
   try { window.localStorage.setItem(key, value); } catch { /* Attach the hash to the server even when browser storage is unavailable. */ }
-}
-function failure(error: unknown): string {
-  if (error && typeof error === "object" && "code" in error && error.code === 4001) return "Wallet request rejected. No transaction was authorized.";
-  return error instanceof Error ? error.message : "The operation did not complete. Refresh before retrying.";
 }
 async function requestJSON(path: string, body?: unknown): Promise<Record<string, unknown>> {
   const response = await fetch(path, { method: body === undefined ? "GET" : "POST", cache: "no-store",
@@ -82,7 +78,7 @@ export default function ReferenceClient({ network }: { network: "testnet" | "mai
       if (chosen) apply({ config: currentConfig, session: chosen }, auth.ownerAddress);
       else { setSession(null); selectedId.current = null; }
       setStatus("ready");
-    } catch (error) { setStatus("error"); setMessage(failure(error)); }
+    } catch (error) { setStatus("error"); setMessage(referenceWalletFailure(error)); }
   }, [network, apply]);
   useEffect(() => {
     const initial = setTimeout(() => { void refresh(); }, 0);
@@ -96,7 +92,7 @@ export default function ReferenceClient({ network }: { network: "testnet" | "mai
   async function work(action: () => Promise<void>) {
     if (busyRef.current) return;
     busyRef.current = true; setBusy(true); setMessage("");
-    try { await action(); } catch (error) { setMessage(failure(error)); }
+    try { await action(); } catch (error) { setMessage(referenceWalletFailure(error)); }
     finally { busyRef.current = false; setBusy(false); }
   }
   async function start() {
@@ -129,34 +125,40 @@ export default function ReferenceClient({ network }: { network: "testnet" | "mai
         assertInjectedWallet(wallet.provider, wallet.revision);
       };
       await assertBuyer();
-      const prepared = session.pendingIntent?.kind === kind && session.pendingIntent.status === "prepared" && !session.pendingIntent.transactionHash ?
+      const prepared = session.pendingIntent?.kind === kind && ["prepared", "wallet-open"].includes(session.pendingIntent.status) && !session.pendingIntent.transactionHash ?
         apply(await requestJSON(`/api/reference/sessions/${session.id}`), customer.ownerAddress) :
         apply(await requestJSON(`/api/reference/sessions/${session.id}`, { action: "prepare", kind }), customer.ownerAddress);
       const intent = prepared.pendingIntent;
-      if (!intent || intent.kind !== kind || intent.transactionHash || intent.status !== "prepared") throw new Error("Wallet intent is not ready; refresh its status");
+      if (!intent || intent.kind !== kind || intent.transactionHash || !["prepared", "wallet-open"].includes(intent.status)) throw new Error("Wallet intent is not ready; refresh its status");
+      if (!intent.transaction.nonce) throw new Error("This older wallet operation has no recorded nonce. Check wallet activity and reconcile its hash; it cannot be retried safely from this page.");
+      const retryingUncertain = intent.status === "wallet-open";
       validateReferenceTransaction(intent.transaction, prepared, config);
       const key = savedHashKey(prepared.id, intent.id);
       if (savedHash(key)) throw new Error("A transaction hash already exists for this intent. Reconcile it before opening the wallet again.");
       try { await assertBuyer(); } catch (error) {
-        apply(await requestJSON(`/api/reference/sessions/${prepared.id}`, { action: "cancel", intentId: intent.id }), customer.ownerAddress);
+        if (!retryingUncertain) apply(await requestJSON(`/api/reference/sessions/${prepared.id}`, { action: "cancel", intentId: intent.id }), customer.ownerAddress);
         throw error;
       }
       const opened = apply(await requestJSON(`/api/reference/sessions/${prepared.id}`, { action: "open-wallet", intentId: intent.id }), customer.ownerAddress);
       if (opened.pendingIntent?.id !== intent.id || opened.pendingIntent.status !== "wallet-open" || opened.pendingIntent.transactionHash) {
         throw new Error("Wallet operation was not opened. Refresh before retrying.");
       }
+      const openedTransaction = opened.pendingIntent.transaction;
+      if (openedTransaction.nonce !== intent.transaction.nonce || openedTransaction.data !== intent.transaction.data ||
+          openedTransaction.to !== intent.transaction.to || openedTransaction.value !== intent.transaction.value ||
+          opened.buyerAddress !== prepared.buyerAddress) throw new Error("The persisted wallet operation changed; no transaction was requested.");
       try { await assertBuyer(); } catch (error) {
         // The provider has not been called, so no transaction can have been broadcast by this attempt.
-        apply(await requestJSON(`/api/reference/sessions/${prepared.id}`, { action: "wallet-rejected", intentId: intent.id }), customer.ownerAddress);
+        if (!retryingUncertain) apply(await requestJSON(`/api/reference/sessions/${prepared.id}`, { action: "wallet-rejected", intentId: intent.id }), customer.ownerAddress);
         throw error;
       }
       let result: unknown;
       try {
         setMessage("Review and approve this single testnet transaction in your wallet.");
         result = await wallet.provider.request({ method: "eth_sendTransaction", params: [{ from: customer.ownerAddress,
-          to: intent.transaction.to, data: intent.transaction.data, value: "0x0", chainId: "0x128" }] });
+          to: intent.transaction.to, data: intent.transaction.data, value: "0x0", chainId: "0x128", nonce: intent.transaction.nonce }] });
       } catch (error) {
-        if (error && typeof error === "object" && "code" in error && error.code === 4001) {
+        if (!retryingUncertain && error && typeof error === "object" && "code" in error && error.code === 4001) {
           apply(await requestJSON(`/api/reference/sessions/${prepared.id}`, { action: "wallet-rejected", intentId: intent.id }), customer.ownerAddress);
         }
         throw error;
@@ -259,6 +261,13 @@ export default function ReferenceClient({ network }: { network: "testnet" | "mai
           <button className="secondary" disabled={busy} onClick={() => void cancelUnopened()}>Cancel unopened operation</button></div>
         </div> : session.pendingIntent && <div className="notice"><h3>Pending wallet operation</h3>
           <p>{labels[session.pendingIntent.kind]} · {session.pendingIntent.status}. If the wallet already submitted it, reconcile its transaction hash below. A missing browser response does not mean the transaction failed.</p>
+          {session.pendingIntent.status === "wallet-open" && !session.pendingIntent.transactionHash && session.pendingIntent.transaction.nonce && <>
+            <p>This operation reserved wallet nonce <span className="mono">{session.pendingIntent.transaction.nonce}</span>. An explicit retry uses the identical recipient, data, value and nonce, so the original and retry cannot both execute. The bridge refuses retry if that nonce was already consumed.</p>
+            <label><input type="checkbox" disabled={busy} checked={consent === `${session.id}:${session.pendingIntent.kind}`}
+              onChange={event => setConsent(event.target.checked ? `${session.id}:${session.pendingIntent!.kind}` : "")} /> I want to retry this identical transaction after checking my wallet activity.</label>
+            <div className="actions"><button disabled={busy || consent !== `${session.id}:${session.pendingIntent.kind}` || now >= customer.expiresAt || (expired && session.pendingIntent.kind !== "refund")}
+              onClick={() => void walletAction(session.pendingIntent!.kind)}>Retry identical transaction in wallet</button></div>
+          </>}
           <div className="topic-form"><label htmlFor="reference-transaction">Transaction hash</label><input id="reference-transaction" value={submittedHash}
             onChange={event => setSubmittedHash(event.target.value)} maxLength={66} placeholder="0x…" disabled={busy} />
           <button disabled={busy || !/^0x[a-fA-F0-9]{64}$/.test(submittedHash)} onClick={() => void attachHash()}>Reconcile transaction</button></div>

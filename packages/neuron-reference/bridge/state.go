@@ -64,6 +64,7 @@ type walletAction struct {
 	To      string `json:"to"`
 	Data    string `json:"data"`
 	Value   string `json:"value"`
+	Nonce   string `json:"nonce,omitempty"`
 }
 type intent struct {
 	ID              string       `json:"id"`
@@ -72,6 +73,7 @@ type intent struct {
 	TransactionHash string       `json:"transactionHash,omitempty"`
 	Transaction     walletAction `json:"transaction"`
 	CandidateHashes []string     `json:"candidateHashes,omitempty"`
+	OpenAttempts    int          `json:"openAttempts,omitempty"`
 }
 type hcsMessage struct {
 	Kind           string          `json:"kind"`
