@@ -2,7 +2,8 @@ import { spawn } from "node:child_process";
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { lstatSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute } from "node:path";
-import { checkLegacyDeviceBinding, listLegacyDevices, networkConfigFromEnv } from "@neuron/hedera";
+import { checkLegacyDeviceBinding, getMirrorAccount, getMirrorTopic,
+  listLegacyDevices, networkConfigFromEnv } from "@neuron/hedera";
 import { getCustomerSession, withCustomerDatabase, type CustomerSession } from "./customer-auth";
 import { gatewayServerEndpoint } from "./gateway-endpoint";
 
@@ -90,6 +91,26 @@ function requestConfig(): RequestConfig {
 
 export function checkCustomerRequestConfiguration(): void {
   requestConfig();
+}
+
+/** Gate a newly advertised testnet request path on current Mirror metadata. */
+export async function preflightCustomerRequestDescriptor(): Promise<void> {
+  const config = requestConfig();
+  const network = networkConfigFromEnv(process.env);
+  if (network.network !== "testnet" || network.chainId !== 296) {
+    throw new Error("Customer requests require Hedera testnet chain 296");
+  }
+  const [, , , , sellerTopic, buyerTopic] = await Promise.all([
+    getMirrorAccount(network, config.seller),
+    getMirrorAccount(network, config.buyer),
+    getMirrorAccount(network, config.shared),
+    getMirrorAccount(network, config.operator),
+    getMirrorTopic(network, config.sellerTopic),
+    getMirrorTopic(network, config.buyerTopic),
+  ]);
+  if (sellerTopic.submit_key !== null || buyerTopic.submit_key !== null) {
+    throw new Error("Customer request and reply topics must be open on testnet");
+  }
 }
 
 async function gatewayMatchesCustomer(sellerAccount: string, session: CustomerSession): Promise<boolean> {

@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
 import type Database from "better-sqlite3";
 import { getAddress, verifyMessage } from "ethers";
-import { confirmEscrowFunding, getVerifiedSellerQuote, networkConfigFromEnv,
+import { confirmEscrowFunding, getMirrorAccount, getMirrorContract, getMirrorTopic,
+  getVerifiedSellerQuote, networkConfigFromEnv,
   type SellerQuote, type VerifiedSellerQuote } from "@neuron/hedera";
 import { withCustomerDatabase, type CustomerSession } from "./customer-auth";
 
@@ -75,6 +76,25 @@ function commerceConfig(): CommerceConfig {
   const maxSpendTinybar = BigInt(cap);
   if (maxSpendTinybar > 100_000_000n) throw new Error("Testnet customer review cap exceeds 1 HBAR");
   return { sellerAccount, quoteTopic, serviceId, escrowContractId, escrowAddress, maxSpendTinybar };
+}
+
+/** Verify the configured identities behind a newly advertised quote route. */
+export async function preflightCustomerCommerceDescriptor(): Promise<void> {
+  // Parse local compatibility first so a mismatched seller/service remains an
+  // explicit configuration conflict even when Mirror is unavailable.
+  const config = commerceConfig();
+  const network = networkConfigFromEnv(process.env);
+  if (network.network !== "testnet" || network.chainId !== 296) {
+    throw new Error("Customer commerce requires Hedera testnet chain 296");
+  }
+  const [, , contract] = await Promise.all([
+    getMirrorAccount(network, config.sellerAccount),
+    getMirrorTopic(network, config.quoteTopic),
+    getMirrorContract(network, config.escrowContractId),
+  ]);
+  if (getAddress(contract.evm_address) !== config.escrowAddress) {
+    throw new Error("Advertised escrow contract ID and EVM address do not match on testnet");
+  }
 }
 
 export function customerCommerceDescriptor(session: CustomerSession): Readonly<{

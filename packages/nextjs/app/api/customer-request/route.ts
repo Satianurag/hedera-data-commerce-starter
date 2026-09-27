@@ -1,5 +1,6 @@
 import { customerAuthOrigin, customerToken, getCustomerSession, sameOrigin } from "../../../lib/customer-auth";
-import { checkCustomerRequestConfiguration, CustomerRequestConflict, customerRequestEnabled, latestCustomerRequest, startCustomerRequest } from "../../../lib/customer-request";
+import { CustomerRequestConflict, customerRequestEnabled, latestCustomerRequest,
+  preflightCustomerRequestDescriptor, startCustomerRequest } from "../../../lib/customer-request";
 
 export const runtime = "nodejs";
 
@@ -24,7 +25,7 @@ export async function GET(request: Request): Promise<Response> {
     const auth = authenticate(request, false);
     if ("error" in auth) return auth.error!;
     const current = latestCustomerRequest(auth.session!, auth.origin!);
-    if (!current) checkCustomerRequestConfiguration();
+    if (!current) await preflightCustomerRequestDescriptor();
     return Response.json({ request: current },
       { headers: { "Cache-Control": "no-store" } });
   } catch {

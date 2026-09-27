@@ -1,7 +1,8 @@
 import { customerAuthOrigin, customerToken, getCustomerSession,
   InvalidCustomerRequest, readObject, sameOrigin } from "../../../lib/customer-auth";
 import { acceptCustomerQuote, CommerceIssue, customerCommerceDescriptor,
-  customerCommerceEnabled, inspectCustomerQuote, latestCommerceIntent } from "../../../lib/customer-commerce";
+  customerCommerceEnabled, inspectCustomerQuote, latestCommerceIntent,
+  preflightCustomerCommerceDescriptor } from "../../../lib/customer-commerce";
 
 export const runtime = "nodejs";
 
@@ -26,6 +27,7 @@ export async function GET(request: Request): Promise<Response> {
   try {
     const auth = authenticate(request, false);
     if ("error" in auth) return auth.error!;
+    await preflightCustomerCommerceDescriptor();
     return json({ seller: customerCommerceDescriptor(auth.session!),
       intent: latestCommerceIntent(auth.session!, auth.origin!) });
   } catch (error) {
