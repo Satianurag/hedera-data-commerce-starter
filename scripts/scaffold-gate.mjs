@@ -77,6 +77,17 @@ try {
     PATH: `${forgeOnPath()}${process.platform === "win32" ? ";" : ":"}${process.env.PATH}`,
     ...(remote ? {} : { CREATE_SCAFFOLD_HBAR_TEMPLATE_DIR: templateDir }),
   };
+  // The CLI refuses to run without a Git identity; CI runners have none.
+  const identity = [["user.name", "Scaffold Gate"], ["user.email", "scaffold-gate@example.invalid"]]
+    .filter(([key]) => spawnSync("git", ["config", key], { encoding: "utf8" }).stdout.trim() === "");
+  if (identity.length) {
+    const offset = Number(env.GIT_CONFIG_COUNT ?? 0);
+    identity.forEach(([key, value], index) => {
+      env[`GIT_CONFIG_KEY_${offset + index}`] = key;
+      env[`GIT_CONFIG_VALUE_${offset + index}`] = value;
+    });
+    env.GIT_CONFIG_COUNT = String(offset + identity.length);
+  }
   runNpm(`scaffold with create-scaffold-hbar@${cliVersion}${remote ? ` from ${templateRepo}` : " from this checkout"}`, [
     "exec", "--yes", `--package=create-scaffold-hbar@${cliVersion}`, "--", "create-scaffold-hbar", "neuron-app",
     "--template", templateRepo, "--frontend", "nextjs-app", "--solidity-framework", "foundry",
