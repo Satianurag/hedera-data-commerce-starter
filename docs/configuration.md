@@ -108,7 +108,7 @@ The writer prints a preassigned ID and payload hash before sending, then checks 
 
 | Symptom | Action |
 | --- | --- |
-| `better-sqlite3` binding missing or ABI mismatch | Select Node from `.nvmrc`, then `npm rebuild better-sqlite3`; build Linux artifacts on Linux |
+| `better-sqlite3` binding missing or ABI mismatch | Select Node from `.nvmrc`, then `npm run rebuild:native`; build Linux artifacts on Linux |
 | Auth disabled or origin rejected | Check explicit testnet, exact origin/Host and private DB directory; HTTPS also requires allowlist |
 | Read-only page reports unavailable | Check current public directory/Mirror availability; retain the unverified state |
 | WebSocket connected but no bytes | Check seller request, selected PeerID, UDP reachability and current seller availability; heartbeat alone is insufficient |

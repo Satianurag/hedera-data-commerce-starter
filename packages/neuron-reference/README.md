@@ -47,7 +47,7 @@ Start the prepared binary without arguments. `--check` runs read-only account/to
 
 ## Restart the configured local service
 
-Use Node **22.23.3** from `.nvmrc` for installation, build and startup. `better-sqlite3` has a native binding for that Node runtime and operating system. If its binding is missing or has an ABI mismatch, select the intended Node version first, then run `npm rebuild better-sqlite3` in the repository root.
+Use Node **22.23.3** from `.nvmrc` for installation, build and startup. `better-sqlite3` has a native binding for that Node runtime and operating system. If its binding is missing or has an ABI mismatch, select the intended Node version first, then run `npm run rebuild:native` in the repository root.
 
 Keep a trusted, operator-maintained shell environment file outside the repository, mode 0600 in a 0700 directory. Include the bridge variables above with their existing paths, plus:
 
