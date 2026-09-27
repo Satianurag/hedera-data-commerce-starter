@@ -11,7 +11,7 @@
   ],
   "scripts": {
     "build": "npm run build -w @neuron/hedera && npm run build -w @neuron/foundry && npm run build -w @neuron/nextjs",
-    "typecheck": "npm run typecheck -w @neuron/hedera && npm run typecheck -w @neuron/nextjs",
+    "typecheck": "npm run typecheck -w @neuron/hedera && npm run typecheck -w @neuron/nextjs && tsc -p e2e",
     "lint": "npm run lint -w @neuron/nextjs",
     "test": "npm run build -w @neuron/hedera && npm run build -w @neuron/nextjs && npm run test -w @neuron/hedera && npm run test -w @neuron/foundry && npm run test -w @neuron/nextjs",
     "verify": "node scripts/verify.mjs",
@@ -21,9 +21,14 @@
     "reference:setup": "cd packages/neuron-go && go run ./cmd/reference-setup",
     "contract:deploy": "npm run build -w @neuron/foundry && npm run deploy -w @neuron/foundry",
     "dev": "npm run build -w @neuron/hedera && npm run dev -w @neuron/nextjs",
-    "start": "npm run start -w @neuron/nextjs"
+    "start": "npm run start -w @neuron/nextjs",
+    "rebuild:native": "node scripts/rebuild-native.mjs",
+    "check:scaffold-text": "node scripts/check-scaffold-text.mjs",
+    "check:scaffold": "node scripts/scaffold-gate.mjs",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@types/node": "20.19.43",
     "eslint": "9.39.5",
     "eslint-config-next": "16.3.6",

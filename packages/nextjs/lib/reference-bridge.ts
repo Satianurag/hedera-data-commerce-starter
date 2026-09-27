@@ -33,7 +33,7 @@ function connection(): { url: URL; token: string } {
       url.username || url.password || url.search || url.hash || url.pathname !== "/") throw new Error("Reference bridge must be an explicit loopback HTTP origin");
   const path = process.env.NEURON_REFERENCE_API_TOKEN_FILE;
   if (!path || !isAbsolute(path)) throw new Error("Reference token file must use an absolute path");
-  const workspace = resolve(process.cwd(), process.cwd().endsWith("packages/nextjs") ? "../.." : ".");
+  const workspace = resolve(/* turbopackIgnore: true */ process.cwd(), process.cwd().endsWith("packages/nextjs") ? "../.." : ".");
   const localPath = relative(workspace, resolve(path));
   if (localPath === "" || (!localPath.startsWith("..") && !isAbsolute(localPath))) throw new Error("Reference token must be outside the workspace");
   for (const entry of [dirname(path), path]) {
