@@ -26,6 +26,14 @@
           ]
         },
         {
+          "title": "Run the browser smoke tests",
+          "steps": [
+            { "command": "npx playwright install chromium" },
+            { "command": "npm run build" },
+            { "command": "npm run test:e2e" }
+          ]
+        },
+        {
           "title": "Run the read-only app",
           "steps": [
             { "command": "npm run dev" },

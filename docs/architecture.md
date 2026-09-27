@@ -12,7 +12,7 @@ This template provides reusable service discovery, Hedera evidence, wallet autho
 | `packages/neuron-go` | Server-only HCS writes, legacy request creation, persistent QUIC/WSS gateway and reference setup | `cmd/`, `legacy/` |
 | `packages/neuron-reference` | Pinned upstream protocol integration, file delivery and ERC20 settlement coordination | `bridge/`, `scripts/prepare.mjs`, [operator guide](../packages/neuron-reference/README.md) |
 
-The npm workspace uses one lockfile. The Go gateway has its own module and sums. The reference build prepares an exact upstream checkout outside the repository because upstream Go packages are `internal`; its original bridge overlay and explicit dependency patches are tracked here. Downloaded upstream sources, binaries and runtime journals are not template files.
+All JavaScript packages share one `package-lock.json`. The Go gateway has its own module and sums. The reference build prepares an exact upstream checkout outside the repository because upstream Go packages are `internal`; its original bridge overlay and explicit dependency patches are tracked here. Downloaded upstream sources, binaries and runtime journals are not template files.
 
 ```mermaid
 flowchart LR
@@ -72,10 +72,10 @@ The manifests and lockfiles are authoritative. These pins describe the current g
 | Web | Next / matching ESLint config `16.3.6`; React / React DOM / React types `19.3.0` |
 | Type and lint tools | TypeScript `5.9.3`; ESLint `9.39.5`; typescript-eslint `8.55.0` |
 | Wallet and state | ethers `6.17.0`; WalletConnect Ethereum Provider `2.25.0`; better-sqlite3 `12.11.1` |
-| Contracts | Foundry npm CLI `1.7.1`; Solidity `0.8.26`; EVM target `paris` |
+| Contracts | Foundry CLI `1.7.1` (`@foundry-rs/forge`); Solidity `0.8.26`; EVM target `paris` |
 | Go integration | Hiero SDK `2.84.0`; libp2p `0.50.0`; coder/websocket `1.8.15` |
 
-Keep native bindings aligned with the deployment OS, architecture and Node runtime. Review peer ranges, engines, security findings and meaningful regressions together when updating. ESLint 9 is a known deprecated maintenance pin; historical Node 20 compatibility is not a reason to deploy an unsupported runtime. The template does not require an unpublished Neuron npm SDK or the JavaScript Hedera SDK.
+Keep native bindings aligned with the deployment OS, architecture and Node runtime. Review peer ranges, engines, security findings and meaningful regressions together when updating. ESLint 9 is a known deprecated maintenance pin; historical Node 20 compatibility is not a reason to deploy an unsupported runtime. The template does not require an unpublished Neuron SDK package or the JavaScript Hedera SDK.
 
 ## Structure references
 
