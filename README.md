@@ -37,7 +37,7 @@ npm ci --engine-strict
 npm run dev
 ```
 
-The CLI network choice does not configure application runtime. Set `HEDERA_NETWORK` explicitly when changing networks. The lockfile supplies Foundry for builds inside an existing checkout.
+The CLI network choice does not configure application runtime. Set `HEDERA_NETWORK` explicitly when changing networks. The lockfile supplies Foundry for builds inside an existing checkout. CLI 0.4.0 also installs its default Foundry library submodules; this template's contract imports none of them, and they are not part of this source tree.
 
 ## What you can build
 
@@ -87,6 +87,7 @@ docs/                Configuration, architecture and verification
 | `npm run start` | Serve the production build |
 | `npm run typecheck` / `npm run lint` | TypeScript and lint checks |
 | `npm test` | Local shared, contract and app checks; no funded transaction |
+| `npm run verify` | Build/tests, types, lint, full dependency tree and npm audit |
 | `npm run test:live` | Opt-in read-only network checks |
 | `npm run hcs:submit` | Submit configured HCS bytes; spends network fees |
 | `npm run contract:deploy` | Deploy native escrow with an explicit signer and fee cap |
