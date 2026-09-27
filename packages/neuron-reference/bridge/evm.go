@@ -12,6 +12,7 @@ import (
 	ethereum "github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/neuron-sdk/neuron-go-sdk/internal/payment"
 	bindings "github.com/neuron-sdk/neuron-go-sdk/internal/payment/bindings"
@@ -26,6 +27,13 @@ func integer(s string) *big.Int {
 	return v
 }
 func hash32(s string) [32]byte { return [32]byte(common.HexToHash(s)) }
+func exactNonce(raw string) (uint64, error) {
+	n, e := hexutil.DecodeUint64(raw)
+	if e != nil || hexutil.EncodeUint64(n) != raw {
+		return 0, errors.New("wallet nonce must be a canonical uint64 hex quantity")
+	}
+	return n, nil
+}
 func (s *server) unsigned(kind string, v *session) (walletAction, error) {
 	abi, e := bindings.NeuronEscrowMetaData.GetAbi()
 	if e != nil {
@@ -180,6 +188,29 @@ func (s *server) prepare(v *session, kind string) error {
 			return errors.New("escrow is already funded or closed; duplicate deposit refused")
 		}
 	}
+	// Persist the chain nonce before any wallet request. A later explicit retry
+	// may change gas pricing, but nonce and operation remain identical, so the
+	// network can execute at most one of those signed transactions.
+	nonce, e := s.rpc.PendingNonceAt(ctx, hexAddress(v.BuyerAddress))
+	if e != nil {
+		return e
+	}
+	for _, other := range s.sessions {
+		if other.ID == v.ID || other.BuyerAddress != v.BuyerAddress || other.PendingIntent == nil {
+			continue
+		}
+		if other.PendingIntent.Transaction.Nonce == "" {
+			return errors.New("this wallet has an unresolved historical intent without a nonce; use its transaction history to reconcile before another purchase")
+		}
+		reserved, parseErr := exactNonce(other.PendingIntent.Transaction.Nonce)
+		if parseErr != nil {
+			return parseErr
+		}
+		if reserved == nonce {
+			return errors.New("this wallet nonce is reserved by another unresolved reference purchase")
+		}
+	}
+	action.Nonce = hexutil.EncodeUint64(nonce)
 	v.PendingIntent = &intent{ID: newID(), Kind: kind, Status: "prepared", Transaction: *action}
 	v.WalletActions = []walletAction{}
 	return s.save(v)
@@ -231,6 +262,18 @@ func (s *server) confirmWallet(v *session, hash string) error {
 		in.Status = "wallet-open"
 		_ = s.save(v)
 		return errors.New("submitted transaction does not match authorized buyer intent")
+	}
+	if in.Transaction.Nonce != "" {
+		nonce, nonceErr := exactNonce(in.Transaction.Nonce)
+		if nonceErr != nil {
+			return nonceErr
+		}
+		if tx.Nonce() != nonce {
+			in.TransactionHash = ""
+			in.Status = "wallet-open"
+			_ = s.save(v)
+			return errors.New("submitted transaction nonce does not match the recorded wallet intent")
+		}
 	}
 	receipt, e := s.rpc.TransactionReceipt(ctx, tx.Hash())
 	if e != nil {
@@ -345,6 +388,44 @@ func (s *server) confirmWallet(v *session, hash string) error {
 	}
 	return nil
 }
+func (s *server) openWallet(v *session, intentID string) error {
+	in := v.PendingIntent
+	if in == nil || intentID != in.ID {
+		return errors.New("wallet intent mismatch")
+	}
+	if in.Transaction.Nonce == "" {
+		return errors.New("historical intent has no recorded nonce; reconcile its transaction hash before continuing")
+	}
+	if in.Status != "prepared" && (in.Status != "wallet-open" || in.TransactionHash != "") {
+		return errors.New("only a prepared intent or an identical nonce-bound retry can open a wallet")
+	}
+	if in.OpenAttempts >= 3 {
+		return errors.New("wallet retry limit reached; reconcile the recorded nonce and transaction history")
+	}
+	nonce, e := exactNonce(in.Transaction.Nonce)
+	if e != nil {
+		return e
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	chain, e := s.rpc.ChainID(ctx)
+	if e != nil {
+		return e
+	}
+	if chain.Cmp(big.NewInt(296)) != 0 {
+		return errors.New("RPC is not Hedera testnet")
+	}
+	latest, e := s.rpc.NonceAt(ctx, hexAddress(v.BuyerAddress), nil)
+	if e != nil {
+		return e
+	}
+	if latest > nonce {
+		return errors.New("recorded wallet nonce is already used; recover the transaction hash from wallet history")
+	}
+	in.Status = "wallet-open"
+	in.OpenAttempts++
+	return s.save(v)
+}
 func (s *server) escrowRef(v *session) string {
 	return hexAddress(s.cfg.EscrowAddress).Hex() + ":" + v.EscrowID
 }
@@ -451,6 +532,9 @@ func (s *server) sellerTransaction(v *session, kind string) (*types.Receipt, err
 		}
 		if saved.Hash().Hex() != v.SellerTxHash || saved.ChainId().Cmp(big.NewInt(296)) != 0 || sender != s.seller || saved.To() == nil || *saved.To() != hexAddress(s.cfg.EscrowAddress) || saved.Value().Sign() != 0 || !bytes.Equal(saved.Data(), expected) || saved.Gas() > 250000 || saved.GasPrice().Cmp(integer(s.cfg.MaxSellerGasPriceWei)) > 0 {
 			return nil, errors.New("persisted seller transaction failed recovery validation")
+		}
+		if e := s.save(v); e != nil {
+			return nil, e
 		}
 		_ = s.rpc.SendTransaction(ctx, &saved)
 	}
