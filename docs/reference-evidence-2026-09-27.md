@@ -110,6 +110,19 @@ Every buyer transaction's exact nonce, chain, recipient, value and calldata was 
 
 Sanitized `public-evidence.json` and `seller-settlement-independent.json` are retained in the owner-only `reference-2026-09-27/api-proof` runtime directory outside the repository. They contain transaction receipts, public session messages, source revision, file hash and balance observations. The separate private recovery journal contains the authentication cookie and signed transactions and must not be copied into the repository. Keys and recovery material are absent from the sanitized evidence.
 
+## Second installed-wallet attempt
+
+After the owner created Account 2, selecting the testing window from Chrome's **Window** menu temporarily restored native UI input. The actual MetaMask receive screen showed `0x064675a68904419BC596a9Fd912E99c898Fa8852` on Hedera testnet. Native funding created account **0.0.10740858**: **1.0 testnet HBAR** through `0.0.10725146@1790492720.114040425`, fee **0.00128158 HBAR**. Mint transaction `0xdf2afe1fecbd2ba9ed39f05eee04cc7d0cc31825fdfcce178f594ef8c97b70f6` credited **0.02 NTT**, fee **0.05592136 HBAR**. Both were independently successful through Mirror.
+
+The previous app login was signed out through `/sessions`. An initial new login prompt still named Account 1 and was rejected. Account 2 was then connected to the local site; its actual MetaMask sign-in message matched its full address, origin `http://127.0.0.1:3000`, chain **296** and fresh nonce. The app displayed the correct authenticated Account 2.
+
+Session `d1559164-eaab-488a-8263-8f0a48e619d3` agreed a **0.01 NTT** purchase with deadline **1790493357** (07:15:57 UTC). Its signed request is seller inbox final sequence **11**, transaction `0.0.10725146@1790492746.617258233`; acceptance is buyer inbox sequence **6**, transaction `0.0.10725146@1790492751.973787716`.
+
+- Actual MetaMask escrow creation, nonce **0**: `0x50ffd67c15a0e30ab2e49b0711f81dea2a13a688a49bd0c5fc6a29141d133c83`; app reconciliation confirmed escrow **7**.
+- Actual MetaMask exact **0.01 NTT** allowance, nonce **1**: `0xbf16a79e41a5ff10c8937ede886dda073a4a177f240260d9cd2d5c82d21be08f`. Native UI control returned a window error after the confirmation click and then timed out. Independent RPC and [Mirror](https://testnet.mirrornode.hedera.com/api/v1/transactions/0.0.7314364-1790492879-773798501) nevertheless confirmed **SUCCESS**. The app retained the submitted hash and exact nonce; do not resend this allowance.
+
+At **07:10:33 UTC**, Account 2's latest/pending nonce was **2**, token balance **0.02 NTT**, HBAR balance **0.76215873**, and allowance **0.01 NTT**. Escrow 7 had **zero deposited funds**. Native control continued timing out after a tool reset; the owner was asked only to bring the main testing window forward. The saved allowance must be reconciled before a deposit is considered. These observations establish another installed-wallet sign-in/create/allowance result, not a completed browser purchase. The independent snapshot is retained outside the repo as `api-proof/browser-independent.json`.
+
 ## Completion gates
 
 - Installed MetaMask testnet connection and signature: **passed**.
