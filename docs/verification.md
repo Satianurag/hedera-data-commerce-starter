@@ -21,7 +21,36 @@ The local gate builds and tests the shared package, native contract and frontend
 
 Each fixture group is optional; absent groups are explicitly skipped and incomplete groups fail. Multi-chunk messages must exceed 1,024 bytes. Use your own exact final sequence and expected bytes/hash; do not assume the latest message is your fixture.
 
-**Final template packaging gate:** pending the clean candidate run. The results below are existing live evidence, not a claim that the new packaging has already passed.
+## Final template gate — 27 September 2026
+
+Clean source **`58d343206cbf63d699efd7a1112cfbe8f52bf7d9`** passed the genuine published Scaffold-HBAR **0.4.0** local-template path, starting from a tracked-source export without dependencies, builds, runtime files or credentials. The published CLI bytes were verified against the npm artifact. This checks actual CLI transformations; anonymous GitHub download remains the public-release gate.
+
+| Check | Result |
+| --- | --- |
+| Fresh `npm ci --engine-strict`, Node 22.23.3 | Passed; 650 installed packages |
+| Production build, generated Next types, typecheck and lint | Passed |
+| Shared / Foundry / Next tests | 43 / 8 / 27 passed; one intentional opt-in check skipped |
+| Full npm dependency tree and audit | Passed; zero reported vulnerabilities |
+| Testnet/mainnet read-only boot and disabled APIs | 34/34 route checks passed, including six page routes per network |
+| Default external read-only suite | 2 passed; 3 unconfigured fixture checks explicitly skipped |
+| Local Go 1.26.8 adapters | 22 top-level tests and vet passed |
+| Fresh reference build | 4 tests and vet passed; binary hash matches the paid-flow binary |
+| Go vulnerability scans | Zero reachable-symbol/imported-package findings; one unused module-only `GO-2026-5932` finding in `x/crypto@v0.56.0` |
+| Source/history secret review | No actual secrets identified; two scanner matches reviewed as patterned test-session data and a public test key |
+| Local documentation links | No missing target files |
+| Visual and keyboard review | Desktop, skip-link/navigation and Safari 300% zoom responsive layout passed; exact 375px device emulation was unavailable |
+
+The CLI rewrites npm command strings; `scripts/verify.mjs` uses argument arrays to preserve the verification command. Its automatic default Foundry libraries are CLI behavior and are absent from this template's source. An initial CI runner-context error was corrected at `7c75c83`. [GitHub Actions run 36307481953](https://github.com/Satianurag/neuron-customer-app-scaffold-hbar/actions/runs/36307481953) then passed both Ubuntu 24.04 jobs: clean Node install/verification/standalone staging and Go adapters/reference build/tests/vet. Later evidence-only documentation edits do not change that tested application code.
+
+### Fresh candidate transaction
+
+The HCS writer **from that clean generated project** submitted [transaction `0.0.10725146@1790499070.059923854`](https://testnet.mirrornode.hedera.com/api/v1/transactions/0.0.10725146-1790499070-059923854). Consensus returned **SUCCESS**. An independent official Mirror lookup matched the payer, all **293 bytes**, source commit/tree and [topic sequence 13](https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10725147/messages/13).
+
+- Payload SHA-256: `9cf4105a82aa70e43d8423f0191c67b167921911c707aefb2e3befb7076f322b`.
+- Consensus timestamp: `1790499083.745312717`.
+- Actual fee: **0.00386065 testnet HBAR**, below the 0.1 HBAR ceiling.
+
+This is source-provenance evidence from the submission candidate. The separate payment evidence below proves the earlier unchanged payment implementation.
 
 ## Installed MetaMask reference purchase — 27 September 2026
 
@@ -60,7 +89,7 @@ The real authenticated API path independently completed paid escrow **6** and ti
 
 | Surface | Status |
 | --- | --- |
-| Default read-only template and local checks | Final packaging run pending above |
+| Default read-only template and local checks | Passed the clean candidate gate above |
 | Pinned reference API and MetaMask paid/refund flows | Passed within the documented scope |
 | Other installed wallets / native-HBAR browser checkout | Not yet verified |
 | Latest hosted artifact | Deployment/access gate remains; earlier host proof is historical |
