@@ -457,15 +457,6 @@ export function attachCustomerFundingHash(session: CustomerSession, origin: URL,
   }).immediate());
 }
 
-export function latestCustomerFunding(session: CustomerSession, origin: URL): FundingRecord | null {
-  return withFundingTable(db => {
-    const row = db.prepare(`SELECT * FROM customer_funding_intents
-      WHERE owner_address = ? AND origin = ? ORDER BY prepared_at DESC LIMIT 1`)
-      .get(session.ownerAddress, origin.origin) as FundingRow | undefined;
-    return row ? asRecord(row) : null;
-  });
-}
-
 export function customerFundingHistory(session: CustomerSession, origin: URL, page: number): Readonly<{
   records: FundingRecord[]; hasMore: boolean;
 }> {

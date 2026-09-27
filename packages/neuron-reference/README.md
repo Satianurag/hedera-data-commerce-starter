@@ -1,8 +1,8 @@
-# Owner-operated Neuron reference document service
+# Reference document service
 
 This optional **testnet-only** adapter connects the template to the pinned Neuron reference protocol. It imports the upstream canonical payment messages, signatures, EVM contract bindings, ECIES connection setup and real libp2p file transport. The application supplies durable state and explicit browser-wallet approval around them.
 
-The service delivers the actual bytes of one operator-selected, permitted file. The development deployment uses the project's own MIT README document. It is a document delivery example, not a live aviation feed. Existing legacy aviation streaming and the starter's native-HBAR escrow remain separate adapters.
+The service delivers the actual bytes of one operator-selected, permitted file. A permitted project document can be used as the example content. It is a document delivery example, not a live aviation feed. Existing legacy aviation streaming and the starter's native-HBAR escrow remain separate adapters.
 
 ## Exact compatibility target
 
@@ -18,7 +18,7 @@ The service delivers the actual bytes of one operator-selected, permitted file. 
 
 The buyer's protocol identity is a server delegate. The signed-in customer wallet is separately bound in the signed request and is the actual onchain escrow buyer. The bridge has **no customer payment key**. Customer create, token allowance, deposit, release approval and refund calls are prepared as unsigned transactions and individually approved in the browser wallet. A separate seller key signs only its release request and withdrawal, with the recipient fixed to that seller.
 
-This is an original orchestration adapter around upstream reference components. Both actual P2P peers run on the same host over loopback QUIC, so the user's blocked inbound router does not prevent this bounded path. It does not establish independent deployed seller compatibility, remote P2P reachability, official registry discovery, official endorsement, browser receipt, or physical sensor provenance. The delivered file is downloadable through the customer's authenticated app session.
+This is an original orchestration adapter around upstream reference components. Both actual P2P peers run on the same host over loopback QUIC, so the user's blocked inbound router does not prevent this bounded path. The adapter alone does not establish compatibility with another deployed seller, remote P2P reachability, official registry discovery, official endorsement or physical sensor provenance. Browser receipt has its own byte/hash check. The delivered file is downloadable through the customer's authenticated app session.
 
 ## Prepare and configure
 
@@ -28,8 +28,8 @@ The preparation command prints the absolute binary path. Set `NEURON_REFERENCE_C
 
 Create an owner-only directory outside this repository (mode 0700). Copy `config.example.json` there as a mode-0600 file and provide:
 
-1. A limited, funded testnet HCS operator account/key; two existing open topics without custom fees. Topic creation is an explicit provisioning step.
-2. Separate buyer protocol delegate and seller secp256k1 keys. Raw 32-byte hex and DER hex files are accepted. The seller account must have its key-derived EVM alias and enough testnet HBAR for its bounded release/withdrawal fees. Never use the disclosed historical test credentials.
+1. A limited, funded testnet HCS operator account/key; two existing open topics without custom fees. If needed, `npm run reference:setup` creates buyer/seller inbox topics with your explicit `HEDERA_NETWORK=testnet`, `HEDERA_OPERATOR_ACCOUNT_ID`, `HEDERA_OPERATOR_KEY_FILE` and a pre-existing private `NEURON_REFERENCE_STATE_DIR`. This command spends testnet fees and journals each ID before sending; preserve `topics.json` when reconciling or rerunning.
+2. Separate buyer protocol delegate and seller secp256k1 keys. Raw 32-byte hex and DER hex files are accepted. The seller account must have its key-derived EVM alias and enough testnet HBAR for its bounded release/withdrawal fees. Use fresh credentials dedicated to your test deployment.
 3. A deployed upstream ERC20 escrow and token, their independently checked runtime Keccak hashes, exact token decimals/symbol and a small price. No contract is deployed or token minted automatically by bridge startup.
 4. An immutable permitted source file, a 120–86,400 second refund window, lifetime session limit and bounded HCS/gas fees. For an interactive wallet run allow enough time for each explicit customer decision. A source/configuration change requires a fresh state directory; existing funded sessions must remain recoverable under their original configuration.
 5. A random bearer token of at least 32 characters in a mode-0600 file; it never goes into a browser or repository.
@@ -103,10 +103,13 @@ The underlying upstream escrow has draft limitations and is enabled only for thi
 
 ## Verification
 
-Preparation builds the actual bridge. The final check should run the bridge's focused tests in the prepared upstream module, then one real buyer-wallet document purchase and one independently funded timeout-refund session. Record exact candidate revision, HCS references, document SHA-256, escrow IDs, token units, successful receipts and seller/buyer token deltas. A private reference-component run must not be called a public Neuron deployment or independent seller proof.
+Run the focused bridge checks from the prepared upstream module (`<cache>/source/impl/golang`):
 
-```text
+```sh
 GOTOOLCHAIN=go1.26.8 go test ./cmd/scaffold-reference
+GOTOOLCHAIN=go1.26.8 go vet ./cmd/scaffold-reference
 ```
 
-On 27 September 2026 the Go 1.26.8 bridge build, four focused tests and package vet passed. The official Go vulnerability scan reported zero reachable/imported-package vulnerabilities and one unused required-module finding. Read-only preflight passed against the actual configured testnet accounts, topics, runtime bytecode hashes and token metadata. No passing end-to-end purchase result is implied by those gates; record the separate live browser evidence after completing it.
+A live acceptance run needs real configured resources and explicit wallet approval: one exact-file paid purchase and a separate funded timeout-refund session. Record source revision, HCS references, file SHA-256, escrow IDs, token units, receipt results and buyer/seller balance changes. Do not present mock upstream demo settlement as real escrow proof.
+
+[The template verification record](../../docs/verification.md) contains completed authenticated API and installed-MetaMask testnet purchase/refund evidence. Both P2P peers ran on one host. These completed flows do not need repeating after a documentation-only change; repeat affected behavior when protocol, transaction or transport code changes.

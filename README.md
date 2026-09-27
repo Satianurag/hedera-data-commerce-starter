@@ -1,120 +1,110 @@
-# Neuron Customer App Starter
+# Neuron × Scaffold-HBAR
 
-An independent Scaffold-HBAR customer application starter for exploring Neuron services; it is not an official Neuron release or endorsed integration. The current implementation reads the live legacy Neuron directory and Hedera Mirror Node on a selected network. It shows seller account/topic binding and HCS message evidence without treating directory records or unsigned heartbeats as proof of a working stream.
+A developer template for building Hedera applications that discover Neuron services, receive data and verify payment. Built with **Next.js, TypeScript, Foundry and Go**, with separate frontend, contract and protocol packages.
 
-## Current implementation
+Start with live, read-only discovery and HCS evidence. Enable a testnet adapter when you are ready to add wallet authentication, streaming or a paid document service. No account, wallet or secret is needed for the default app.
 
-**27 September checkpoint:** the opt-in `/reference` purchase path connects pinned upstream Neuron Go protocol packages to an owner-run file service and ERC20 escrow. Actual installed **MetaMask 13.50.0** checkout passed: exact **29,099-byte** browser file download, explicit buyer approval and **0.01 NTT** seller payment through escrow **9**, ending empty. A separate browser session returned **0.01 NTT** after timeout; its initially underestimated gas failure and manual recovery led to a bounded dynamic gas fix. Real authenticated application API paid/refund checks also passed separately. See [the exact evidence and limitations](docs/reference-evidence-2026-09-27.md), [current work memo](docs/CURRENT_WORK.md) and [service setup/restart](packages/neuron-reference/README.md). Both reference P2P peers run on the local host. Hosted deployment, other wallet paths and mainnet still require their own release gates. Legacy aviation streaming and the starter's native-HBAR extension below have separate evidence.
+## Quickstart
 
-- Next.js app: `/`, `/services`, `/services/[accountId]`, `/evidence?topic=0.0...`, and `/sessions` for an opt-in testnet stream.
-- Testnet legacy directory: live records from `https://explorer.neuron.world/api/v1/device/wip-all`. A selected seller's DER public key is compared with its testnet Mirror account key; stdin/stdout topic metadata must exist.
-- HCS evidence: latest message read from the selected network's Mirror Node, with bounded pagination, chunk reassembly, payer, sequence, consensus time, payload length and SHA-256.
-- Draft Neuron `TopicMessage` verification on `/evidence`: canonical JSON, uint64/base64 fields and secp256k1 signature are checked against the pinned upstream Chain 2 vector. For a signed message, the page separately compares the recovered key with the HCS payer account's current Mirror key. A real signed candidate message passed this check on testnet; it was signed by our operator, not an external seller.
-- Binary Mode-S framing in the shared package: preserves exact bytes across arbitrary transport reads and checks DF17 CRC. It passed a published reference frame, an offline parse of the candidate's real seller WebSocket capture, and a [live browser session](docs/testnet-evidence-2026-09-26.md).
-- Server-only Go legacy gateway: an authenticated single-subscriber binary WebSocket backed by an identity-checked QUIC stream. A real seller stream reached both a separate subscriber and the Next.js `/sessions` page through a public Mumbai UDP and TLS/WSS gateway on testnet. The browser route issues short-lived, single-use tickets. Current source checks customer-session revocation for v2 tickets before connection and while streaming; the hosted gateway still runs an older artifact.
-- Gateway tickets bind to a random process instance ID: a ticket issued before a gateway restart is rejected afterward. This was [tested through the Mumbai WSS endpoint](docs/testnet-evidence-2026-09-26.md#gateway-restart-ticket-edge--26-september-2026). The local ticket issuer also checks the exact configured Host and Origin; these controls do not replace customer authentication.
-- Optional testnet wallet sign-in uses a one-use signed challenge and an owner-only SQLite session store. With `NEURON_ENABLE_CUSTOMER_AUTH=true`, `NEURON_APP_ORIGIN` and `NEURON_CUSTOMER_DB_FILE` set, the loopback ticket route requires a live customer session. Its v2 ticket binds the wallet and session ID to the seller and gateway process; the gateway journals those IDs. An opt-in testnet request button can submit the selected seller's legacy service request through the server-only Go HCS writer after the gateway confirms that the same customer owns its active subscriber. This is connection identity and HCS request evidence, not purchase ownership or seller delivery proof.
-- The persistent gateway records `opened`, `closed` and crash-recovery `interrupted` connection events in an owner-only journal. The [Mumbai crash and live-stream test](docs/testnet-evidence-2026-09-26.md#durable-gateway-connection-journal-and-live-stream--26-september-2026) matched its recorded byte count to a real WSS subscriber. For a v2 ticket it stores the signed-in wallet and session ID. The new gateway checks the app's active-session record on connection and periodically afterward; a revoked session or unavailable app closes the customer stream after a short polling delay.
-- Central `HEDERA_NETWORK=testnet|mainnet` switch binds the Mirror endpoint and EVM chain ID (296/295). Optional `HEDERA_CHAIN_ID` must match the selected network exactly. Enabled testnet request and quote descriptors check their configured account/topic metadata and escrow contract ID/address against Mirror before advertising a new action; each write has its own fresh checks. Mainnet has no approved legacy directory in the current configuration. No funded account or secret is needed for the public read-only routes.
-- Server-only Go HCS writer in `packages/neuron-go/cmd/hcs-submit`: explicit network, owner-only DER key file, positive fee cap, topic fee preflight, consensus receipt and exact Mirror read-back. A [fresh testnet transaction](docs/testnet-evidence-2026-09-26.md) was generated by this working tree.
-- Foundry `packages/foundry` native-HBAR escrow: distinct buyer/seller, terms-hash commitment, buyer-only approval, seller-only withdrawal before deadline, and buyer timeout refund even after approval if the seller leaves funds unclaimed. The current source revision was [deployed and exercised on testnet](docs/testnet-evidence-2026-09-26.md#current-escrow-source-revision-fresh-native-hbar-lifecycle--26-september-2026) with RPC receipt, Mirror results and runtime-bytecode checks. Its terms hashes were controlled test constructs, not seller-signed quotes.
-- A testnet-only signed quote verifier in `packages/neuron-hedera` fetches an exact seller HCS sequence from Mirror, reassembles bounded chunks, checks the seller account key and EVM payee, and binds buyer, service, session, contract, HBAR amount, cap and refund deadline. Its schema is specific to this starter and is **not** the unresolved draft Neuron 008 invoice format. No external seller has signed these terms. A controlled quote, buyer wallet funding and deadline refund passed through the app API on testnet; the feature remains disabled by default and did not pay the seller. Installed-wallet browser interaction and independent seller compatibility remain unverified.
+Use **Node 22.23.3** (`.nvmrc`), npm and Git. Go **1.26.8** is needed for server adapters and HCS commands. Linux and macOS are the supported development environments; Windows users should use WSL2.
 
-The opt-in quote review route records a wallet-signed acknowledgement without moving funds. A fresh controlled-seller quote passed this review on testnet through a CLI wallet client. The separate funding path is designed to recheck the seller signature and exact quote, escrow account/address/runtime, contract renewal horizon, fee cap and refund deadline before presenting a wallet transaction. Buyer refund is a separate explicit wallet action after the deadline. The controlled buyer funding and timeout refund paths passed a real testnet app API run, with independent Mirror transactions and a final zero contract balance. This does not establish browser-wallet interaction, external seller payment or data delivery; a stored review, transaction hash or terms hash alone is not payment or delivery evidence.
+From a checkout:
 
-The controlled-seller `/commerce` review feature is disabled by default. To expose it in a controlled testnet deployment, enable customer auth and set `NEURON_ENABLE_CUSTOMER_COMMERCE_REVIEW=true`, `NEURON_COMMERCE_SELLER_ACCOUNT_ID`, `NEURON_COMMERCE_QUOTE_TOPIC_ID`, `NEURON_COMMERCE_SERVICE_ID`, `NEURON_COMMERCE_MAX_SPEND_TINYBAR` (at most 1 HBAR), `HEDERA_CONTRACT_ID`, and the checksummed `HEDERA_CONTRACT_ADDRESS`. It needs the owner-only `NEURON_CUSTOMER_DB_FILE`. A seller must publish a real signed `neuronCustomerQuote/v1` on the configured HCS topic and provide its final sequence; no supported external seller quote has been obtained yet. The exact schema is this starter's proposal, not a claim of Neuron 008 interoperability. The quote binds the buyer and customer session; this revision has no verified seller evidence HCS schema or quoted evidence topic. Manual approval is based on separately disclosed gateway transport evidence and the buyer's own decision.
-
-The buyer-funding switch is `NEURON_ENABLE_CUSTOMER_FUNDING=true`. It also requires a deliberately selected HTTPS testnet `HEDERA_RPC_URL`, exact deployed `NEURON_ESCROW_RUNTIME_SHA256`, and `NEURON_COMMERCE_MAX_TX_FEE_TINYBAR` at most 100,000,000 tinybar. The current contract source was deployed and exercised as testnet contract `0.0.10730636` with runtime SHA-256 `f4521f153b8ecc0bdae2b6545fb606800aff07bc73b86e6d8f7d710f156def21`; this proves contract mechanics with constructed terms, and the app funding/refund path passed with a fresh controlled seller-signed quote. External seller interoperability and the installed-wallet browser flow still lack proof. New funding also requires the buyer-approval switch; existing refund recovery remains available when new funding is disabled. Funding and buyer refund use the wallet selected by the signed-in customer. They do not authorize seller withdrawal.
-
-The separate **unverified** buyer-approval switch is `NEURON_ENABLE_CUSTOMER_APPROVAL=true`. It requires the same testnet auth and funding gates, explicit `HEDERA_RPC_URL`, fee cap, owner-only `NEURON_SESSION_TOKEN_FILE`, and private `NEURON_GATEWAY_INTERNAL_ORIGIN`. This legacy gateway currently supports only service ID `"1"` (ADS-B) for approval, with the quote seller and configured gateway seller equal. The buyer must separately confirm the wallet transaction after a confirmed same-session seller request and completed positive-byte gateway connection following funding. The gateway reports bytes written to its WebSocket connection; this does not prove browser receipt or service delivery. Approval may fail closed if the bounded gateway journal is truncated. A seller can withdraw funds after on-chain approval and before the deadline, so enable this only after the final test gate and a real seller-signed quote review.
-
-The wallet-authenticated API request path and the browser's actual **Request seller data** button have [real testnet HCS and WSS proof](docs/testnet-evidence-2026-09-26.md#mobile-customer-page-and-browser-request-button--26-september-2026). Installed MetaMask reference checkout has the separate evidence above. External legacy seller terms, installed-wallet native-HBAR checkout and mainnet Neuron deployment proof remain open. The native-HBAR escrow has real custody/recovery mechanics; its controlled quote/refund results do not establish external legacy seller compatibility or delivered service. The app is not release-ready. Existing historical experiments in [the audit](READINESS_AUDIT_2026-09-25.md) are separate from the new candidate transactions.
-
-## Run
-
-Use Node **22.23.3**, selected by `.nvmrc` and current in the supported Node 22 LTS branch as of 27 September 2026. The existing compatible lockfile is retained. Earlier Node 20 checks are historical; Node 20 is now end of life and is not the deployment default.
-
-The GitHub repository is **private** at the owner's request as of 26 September 2026. An anonymous `create-scaffold-hbar --template owner/repo` clone currently cannot work. The following command passed while the repository was public and is retained as historical release evidence:
-
-```bash
-npx --yes --package=@foundry-rs/forge@1.7.1 --package=create-scaffold-hbar@0.4.0 -c 'create-scaffold-hbar neuron-customer-app --template Satianurag/neuron-customer-app-scaffold-hbar --frontend nextjs-app --solidity-framework foundry --package-manager npm --network testnet --skip-install --skip-hedera-skills --yes --ci'
-cd neuron-customer-app
+```sh
+nvm use
 npm ci --engine-strict
-HEDERA_NETWORK=testnet npm run dev
+npm run dev
 ```
 
-The standalone `npx` command passed from `/tmp` before the privacy change; its clone then passed install, build, typecheck, lint, tests and zero-finding npm audit. The CLI's `--network` selection does not set the app's runtime network, so set `HEDERA_NETWORK` explicitly. Current authorized collaborators can install from an existing private checkout with the commands below.
+Open **http://localhost:3000**. Visit **Services** for current testnet directory records and **Evidence** to inspect a Hedera topic. External outages produce an unavailable state; the template does not substitute generated records.
 
-```bash
+Optional settings belong in `packages/nextjs/.env.local`. Start from [`.env.example`](packages/nextjs/.env.example); write features are disabled by default. Shell environment variables also work. Set `HEDERA_NETWORK=mainnet` for mainnet **read-only** evidence; testnet commerce and streaming remain disabled there.
+
+### Scaffold-HBAR CLI
+
+The external-template command requires a public repository. This repository currently requires collaborator access; anonymous scaffolding becomes available after publication.
+
+```sh
+npm create scaffold-hbar@latest -- --template Satianurag/neuron-customer-app-scaffold-hbar
+```
+
+Choose **Next.js App Router · Foundry · npm · testnet**. CLI 0.4.0 checks for `forge` before scaffolding. If you do not have it, this pinned command supplies the official Foundry npm executable:
+
+```sh
+npx --yes --package=@foundry-rs/forge@1.7.1 --package=create-scaffold-hbar@0.4.0 -c 'create-scaffold-hbar neuron-app --template Satianurag/neuron-customer-app-scaffold-hbar --frontend nextjs-app --solidity-framework foundry --package-manager npm --network testnet --skip-install --skip-hedera-skills --yes --ci'
+cd neuron-app
 npm ci --engine-strict
-npm run build
-npm run typecheck
-npm run lint
-npm test
-npm run test:live
-npm run start
+npm run dev
 ```
 
-The contract package uses `@foundry-rs/forge@1.7.1` from the npm lockfile and ethers `6.17.0`; working from this repository needs no separate Hardhat or Foundry installation. `create-scaffold-hbar@0.4.0` checks for a `forge` binary before it copies a template, so a user of that CLI must provide one (the same official npm Foundry package can provide it). The Go commands require Go **1.26.8** or a later supported release; Go 1.26.0 has reachable standard-library security findings.
+The CLI network choice does not configure application runtime. Set `HEDERA_NETWORK` explicitly when changing networks. The lockfile supplies Foundry for builds inside an existing checkout.
 
-The public `create-scaffold-hbar@0.4.0 --template Satianurag/neuron-customer-app-scaffold-hbar` path fetched [revision `f6841cf`](https://github.com/Satianurag/neuron-customer-app-scaffold-hbar/tree/f6841cf28549520b199bbf00dea1a6286b422d8d), selected Next.js, Foundry, npm and testnet, then passed fresh install, full dependency tree, build, typecheck, lint, 24 shared tests, six contract tests and zero-finding npm audit on Node **20.18.3** and **22.23.3**. Zero-secret testnet and mainnet read-only boots returned HTTP 200 on core routes and kept the ticket route disabled. The CLI automatically adds default Foundry submodules even though this contract package does not import them. It also expects a `main` default branch and a `forge` executable at scaffold time.
+## What you can build
 
-The Go writer **from that public scaffold copy** produced a [fresh testnet HCS transaction tied to public source revision `f6841cf`](docs/testnet-evidence-2026-09-26.md#public-scaffold-revision-and-fresh-hcs-proof--26-september-2026), with consensus `SUCCESS` and independently matched Mirror payer, topic, exact bytes and hash. Earlier local-revision proof is recorded separately in the evidence document.
+| Example | Included behavior | Setup |
+| --- | --- | --- |
+| Service explorer | Live legacy directory; seller account/key/topic checks; provenance labels | Works by default on testnet |
+| HCS evidence viewer | Topic metadata, exact bytes, bounded chunk reassembly, payer and signed-envelope verification | Works by default on either network |
+| Binary data consumer | Legacy QUIC → authenticated WebSocket → browser, Mode-S decoding and stale/disconnected states | Configure the [legacy gateway](docs/configuration.md#legacy-streaming) |
+| Paid document service | Signed reference negotiation, real file transport, exact ERC20 allowance/deposit, buyer inspection, seller payment and timeout refund | Configure the [reference adapter](packages/neuron-reference/README.md) |
+| Native-HBAR escrow | Original Foundry contract and separately gated signed-quote extension | Read the [native-HBAR setup](docs/configuration.md#native-hbar-extension) |
 
-Revision `68f235a` was publicly cloned before the privacy change. It binds the selected network to its EVM chain ID after the service failure state, durable gateway journal and exact-sequence HCS reader. That historical public CLI clone passed strict install, full dependency tree, build, typecheck, lint, **26 shared tests**, six Foundry tests and zero-finding npm audit on Node **20.18.3** and **22.23.3**. Zero-secret testnet and mainnet read-only boots passed; the prior revision's induced directory outage rendered the unverified retry state on both service routes. Its Go writer produced a [source-linked testnet transaction](docs/testnet-evidence-2026-09-26.md#current-public-network-binding-revision-proof--26-september-2026) at controlled topic sequence `11`. The journal records gateway connection lifecycle, not customer identity or purchase authorization.
+These are separate protocol adapters. A legacy aviation seller does not automatically accept the reference ERC20 invoice or this template's native-HBAR quote. This is an independent integration, without official Neuron endorsement.
 
-`test:live` makes read-only requests to the current Neuron legacy directory and Hedera testnet and mainnet Mirror Nodes. It expects a particular real testnet seller, the earlier real multi-chunk test topic, and a public mainnet account to remain present; testnet resets or seller changes can make this integration test fail. `npm test` checks local network selection without contacting external services.
+## Make it yours
 
-The Go `cmd/legacy-gateway` and `cmd/legacy-request` are testnet-only because the current live legacy seller directory has no verified mainnet counterpart. The gateway requires a buyer key file, selected seller account, UDP port, exact browser origin, owner-only random session-token file and loopback HTTP listener (or TLS for non-loopback). It relays raw QUIC chunks as binary WebSocket messages and rejects a wrong PeerID, origin or token. A temporary outbound UDP tunnel provides reachability behind this router; the tunnel address is supplied to `cmd/legacy-request`, which validates both parties and the buyer's open reply topic and nearly empty shared account before producing an HCS payload. The payload is submitted using `hcs-submit` with `HEDERA_TOPIC_ACCESS=open` and a fee cap. These commands never sign seller schedules or pay invoices. The [dated testnet record](docs/testnet-evidence-2026-09-26.md) has the real request, browser data and decoding evidence.
+| Change | Start here |
+| --- | --- |
+| Landing, navigation and styling | `packages/nextjs/app/page.tsx`, `app/layout.tsx`, `app/style.css` |
+| Service discovery and identity | `packages/neuron-hedera/src/legacy.ts` |
+| Network and Mirror rules | `packages/neuron-hedera/src/network.ts`, `src/mirror.ts` |
+| Decode another data format | `packages/neuron-hedera/src/frames.ts` and the session view |
+| Change the delivered document | The reference adapter's private `sourceFile` configuration |
+| Add a payment protocol | A separate adapter with explicit terms, asset units and recovery rules |
+| Change the native escrow | `packages/foundry/src/BuyerEscrow.sol` and its tests |
 
-For a local browser session, start the Go gateway with `HEDERA_NETWORK=testnet`, `NEURON_SELLER_ACCOUNT_ID`, `HEDERA_BUYER_KEY_FILE`, `NEURON_UDP_PORT`, `NEURON_GATEWAY_LISTEN=127.0.0.1:9080`, `NEURON_APP_ORIGIN=http://localhost:3000`, and `NEURON_SESSION_TOKEN_FILE` pointing to an owner-only file containing 32 random hex bytes. For authenticated v2 sessions also set `NEURON_GATEWAY_SESSION_CHECK_URL=http://127.0.0.1:3000/api/gateway-session`; the gateway rejects v2 tickets when that internal app check is absent or unavailable. Start Next with the same network, seller, origin and token path plus `NEURON_ENABLE_LOCAL_STREAM=true` and `NEURON_GATEWAY_WS_URL=ws://127.0.0.1:9080/stream`; open `http://localhost:3000/sessions`. A remote TLS gateway uses `NEURON_ENABLE_REMOTE_STREAM=true`, a `wss://<approved-host>/stream` URL and the exact `NEURON_GATEWAY_PUBLIC_HOST`; both sides must share the owner-only session token, seller account and app Origin. A **non-loopback gateway also requires** `NEURON_SESSION_JOURNAL_FILE`: an absolute path inside an owner-only directory writable by the service, where it creates a 0600 file. Keep that journal outside the repository; the gateway fails closed if the file is insecure, corrupt or already locked. The **verified** Next.js test configuration remains bound to loopback (`npm run start -w @neuron/nextjs -- -H 127.0.0.1`). The remote gateway needs a valid TLS certificate, persistent UDP and HTTPS ingress, and a buyer key limited to this test. [The Mumbai testnet run](docs/testnet-evidence-2026-09-26.md#public-mumbai-gateway-and-real-remote-browser-stream--26-september-2026) documents the actual WSS browser proof and its limits. With the request control disabled, use `cmd/legacy-request` and `cmd/hcs-submit` to start seller data. **Connect** opens the stream and never moves funds.
+Keep network, identity, transport and payment verification independent. See [architecture and extension points](docs/architecture.md).
 
-To enable the testnet sign-in gate in the local app, set `NEURON_ENABLE_CUSTOMER_AUTH=true`, keep `NEURON_APP_ORIGIN` equal to the exact browser origin, and set `NEURON_CUSTOMER_DB_FILE` to an absolute path in a pre-existing owner-only (0700) directory outside the repository. The app creates its SQLite file with mode 0600. The wallet must be on Hedera testnet chain 296. The v2 ticket identifies that wallet and session in the gateway journal. With the internal session check configured, the gateway rejects an already issued ticket after logout and closes an existing stream after its next check. The browser reports sign-out failure if no active session was actually revoked.
+## Repository
 
-The browser shows EIP-6963 and legacy injected EVM wallets and requires an explicit choice each page session. It rejects providers that cannot report account, network and disconnect changes. An optional WalletConnect button is offered only when testnet customer auth has an exact `NEURON_APP_ORIGIN` and `NEURON_REOWN_PROJECT_ID` is set to a dedicated 32-hex-character Reown project ID. The browser checks that returned origin equals its own and that the chain is Hedera testnet **296** before opening the QR connection; connect alone signs nothing. Account, chain, session-update and disconnect events invalidate the chosen wallet. The package is pinned to `@walletconnect/ethereum-provider@2.25.0` with compatible `unstorage@1.17.3` and type-only `@wallet-standard/base@1.1.0` overrides. [The HashPack audit](docs/wallet-compatibility-audit-2026-09-26.md) records the package and licensing limits: this source path still needs a disposable ECDSA HashPack handshake, signature and capped transaction before the owner's extension is used. Mainnet sign-in and commerce remain disabled.
-
-To let that signed-in customer start the configured **testnet legacy** service, additionally set `NEURON_ENABLE_CUSTOMER_REQUEST=true`, `NEURON_SELLER_STDIN_TOPIC_ID`, `HEDERA_BUYER_ACCOUNT_ID`, `HEDERA_BUYER_STDIN_TOPIC_ID`, `HEDERA_SHARED_ACCOUNT_ID`, `HEDERA_OPERATOR_ACCOUNT_ID`, `HEDERA_BUYER_KEY_FILE`, `HEDERA_OPERATOR_KEY_FILE`, `NEURON_PUBLIC_UDP_MULTIADDR`, `HEDERA_MAX_FEE_TINYBAR`, and absolute `NEURON_LEGACY_REQUEST_BIN` / `NEURON_HCS_SUBMIT_BIN` paths to owner-controlled executable Go binaries outside the repository. Use the same `NEURON_SESSION_TOKEN_FILE` as the running gateway. The buyer/shared accounts should be dedicated and minimally funded; the HCS operator pays only the capped request transaction fee. The **verified local** route requires a loopback Next origin, an active wallet session, the **same session** connected to the gateway, current seller/Mirror binding, and an empty POST body. It reserves one durable request per signed-in session, throttles new sessions for 120 seconds, records a preassigned HCS transaction ID and receipt, and returns an existing request on repeat POST. The control signs no seller schedule or payment. The API path, browser request button and WSS bytes passed real testnet runs. Installed MetaMask sign-in passed separately on 27 September; completing this legacy service flow through an installed wallet remains unverified.
-
-An **opt-in HTTPS testnet pilot path** requires an exact `NEURON_APP_ORIGIN=https://...`, remote WSS, `NEURON_ENABLE_CUSTOMER_AUTH=true`, and `NEURON_ALLOWED_CUSTOMER_ADDRESSES` containing one to twenty comma-separated, checksummed EVM addresses; removing an address invalidates its app sessions on the next read. Public HCS requests also require `NEURON_ENABLE_PUBLIC_CUSTOMER_REQUEST=true` and `NEURON_PUBLIC_REQUEST_LIMIT` from 1 to 100. The latter is a lifetime request budget for the pilot database; it does not reset automatically. For a colocated host, set `NEURON_GATEWAY_INTERNAL_ORIGIN=http://127.0.0.1:9080` so the app checks gateway health and session ownership through loopback while browsers use the public WSS address. `packages/nextjs/next.config.mjs` produces a standalone server; build with a clean install on the **target Linux architecture** and then run `node deploy/testnet/stage-app.mjs` to stage its static assets. The SQLite native binding from a macOS build cannot be copied to the Linux VM. The Linux x64 build, native SQLite load and zero-secret testnet/mainnet container boots passed. `deploy/testnet/nginx.conf.template` routes HTTPS app requests and WSS to loopback Next/Go processes and hides the internal check endpoints. Render its host and certificate placeholders for the actual test host. The read-only Mumbai hosted pilot passed HTTPS, authenticated WSS with real seller bytes, and a Certbot renewal dry-run. Browser-wallet interaction and hosted commerce remain unverified; keep commerce writes disabled pending an independent seller quote and explicit release test.
-
-If a request is `uncertain` or stuck at `submitting`, keep it blocked. Wait at least 120 seconds before reconciling a `submitting` row. With `HEDERA_NETWORK=testnet`, `NEURON_CUSTOMER_DB_FILE`, `HEDERA_OPERATOR_ACCOUNT_ID` and `NEURON_SELLER_STDIN_TOPIC_ID` set to the same values used for the write, run `npm run request:reconcile -w @neuron/nextjs -- <request-id>`. The read-only Mirror lookup requires the journal's exact preassigned transaction ID and payload SHA-256; only a matching successful transaction, payer, topic, consensus timestamp, bytes and sequence changes the row to `confirmed`. The app cannot overwrite that confirmed proof with a later uncertain result. The script never submits a transaction or clears an unmatched row. If the transaction ID was not recorded or Mirror cannot prove the exact write, investigate manually; do not retry blindly. A copy of the real testnet journal entry was reconciled, and a wrong-topic attempt left it uncertain.
-
-For local development, use `npm run dev`. Set `HEDERA_NETWORK=mainnet` to read the official mainnet Mirror Node instead of testnet. The current reader accepts only the official Mirror URL for the selected network and the canonical testnet legacy directory; `HEDERA_MIRROR_URL` and `NEURON_LEGACY_DIRECTORY_URL` cannot override them with unverified endpoints. Production provider and mainnet directory onboarding require explicit network binding before use.
-
-The public mainnet Mirror endpoint is suitable for development reads; a production deployment needs a provider and operating limits appropriate to its traffic. There is no server-side customer payment signer: buyer funding, seller-withdrawal approval and refund each require a separate buyer wallet confirmation. Do not place private keys in browser variables or commit them to the repository.
-
-## Submit HCS evidence from the server
-
-The writer requires Go **1.26.8**, a separately funded operator, and either a topic whose submit key matches that operator or an open topic selected explicitly with `HEDERA_TOPIC_ACCESS=open`. Supply a private DER key file outside the repository with owner-only permissions. Its standard input is the exact 1–8,192 bytes to submit, split into at most eight 1,024-byte HCS chunks. It verifies the account and topic access on the selected network and rejects topics with custom fixed fees. `HEDERA_MAX_FEE_TINYBAR` is divided among chunk transactions as a nominal sum of their fee ceilings; internal SDK retries mean it is not a hard aggregate spend cap. Reconcile an uncertain or partial submission before any manual retry.
-
-```bash
-HEDERA_NETWORK=testnet \
-HEDERA_OPERATOR_ACCOUNT_ID="$TESTNET_ACCOUNT_ID" \
-HEDERA_TOPIC_ID="$TESTNET_TOPIC_ID" \
-HEDERA_OPERATOR_KEY_FILE="$PRIVATE_KEY_FILE" \
-HEDERA_MAX_FEE_TINYBAR="$MAX_FEE_TINYBAR" \
-npm run hcs:submit < "$MESSAGE_FILE"
+```text
+packages/
+  nextjs/             App Router UI, authenticated API and customer journal
+  foundry/            Native-HBAR escrow, deployment and contract tests
+  neuron-hedera/      Shared network, Mirror, HCS and protocol utilities
+  neuron-go/          Server HCS writer and legacy QUIC/WebSocket gateway
+  neuron-reference/   Optional pinned reference document-service adapter
+deploy/testnet/      Linux service and nginx templates
+docs/                Configuration, architecture and verification
 ```
 
-The command prints the preassigned transaction ID and payload hash before submission. It returns JSON only after Mirror confirms the exact bytes and payer; `receiptStatus` is `SUCCESS` when the consensus receipt was obtained, or `UNKNOWN` if Mirror confirmed an execution whose receipt was unavailable. If submission or Mirror confirmation fails, reconcile the printed ID before retrying because the transaction may already have succeeded. Mainnet writing additionally requires `HEDERA_ALLOW_MAINNET_WRITES=true`; no mainnet submission or deployment has been performed. Run `go test ./...`, `go vet ./...` and `go run golang.org/x/vuln/cmd/govulncheck@latest ./...` inside `packages/neuron-go` to check its separate Go dependency graph.
+## Commands
 
-## Deploy and exercise the native-HBAR escrow
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | Build the shared package and start development |
+| `npm run build` | Build shared code, contracts and production frontend |
+| `npm run start` | Serve the production build |
+| `npm run typecheck` / `npm run lint` | TypeScript and lint checks |
+| `npm test` | Local shared, contract and app checks; no funded transaction |
+| `npm run test:live` | Opt-in read-only network checks |
+| `npm run hcs:submit` | Submit configured HCS bytes; spends network fees |
+| `npm run contract:deploy` | Deploy native escrow with an explicit signer and fee cap |
+| `npm run reference:build` | Prepare the pinned reference adapter outside the repo |
 
-The Foundry contract [source](packages/foundry/src/BuyerEscrow.sol) is compiled by the root build. Deployment accepts an owner-only DER ECDSA **EVM-alias** account key, checks its Mirror key and EVM address, checks the RPC chain ID and a gas-fee cap, then compares deployed runtime code with the compiled artifact. The public HashIO RPC is the testnet development default. A mainnet deployment has **no default RPC**: `HEDERA_RPC_URL` must name a separately chosen production HTTPS provider, and the explicit mainnet-write gate, signer, fee cap and release review still apply. Example variable names (use your own testnet identities and private file paths):
+## Verification and limits
 
-```bash
-HEDERA_NETWORK=testnet \
-HEDERA_OPERATOR_ACCOUNT_ID="$TESTNET_EVM_ACCOUNT_ID" \
-HEDERA_OPERATOR_KEY_FILE="$TESTNET_EVM_KEY_FILE" \
-HEDERA_MAX_FEE_TINYBAR="$MAX_FEE_TINYBAR" \
-HEDERA_CONTRACT_GAS="$GAS_LIMIT" \
-npm run contract:deploy
-```
+Installed **MetaMask 13.50.0** completed a real testnet document purchase: exact **29,099-byte** download, **0.01 NTT** seller payment and an empty escrow. A separate timeout refund returned **0.01 NTT**. [Receipts, source revisions, fees and reproducible checks](docs/verification.md) distinguish these results from the legacy stream and native-HBAR examples.
 
-The opt-in `npm run test:live -w @neuron/foundry` needs `HEDERA_NETWORK=testnet`, `HEDERA_CONTRACT_ID`, `HEDERA_CONTRACT_ADDRESS`, `HEDERA_BUYER_ACCOUNT_ID`, `HEDERA_BUYER_KEY_FILE`, `HEDERA_SELLER_ACCOUNT_ID`, `HEDERA_SELLER_KEY_FILE`, `HEDERA_MAX_FEE_TINYBAR`, and an absolute `HEDERA_TEST_JOURNAL_FILE` path to an owner-only file outside the repository. It writes each submitted transaction hash to that journal before waiting for confirmation and obtains each escrow ID from its own `Funded` event. The **current** source spent 0.1 HBAR each for buyer-approved seller withdrawal, unapproved timeout refund, and approved but unclaimed timeout refund, plus fees on new testnet contract `0.0.10730636`. Its [dated evidence](docs/testnet-evidence-2026-09-26.md#current-escrow-source-revision-fresh-native-hbar-lifecycle--26-september-2026) records the deployment, eight Mirror results, final states and zero contract balance. Prior contract `0.0.10727954` is historical and has the old fund ABI. No external seller-signed quote or customer-app checkout has been tested. Mainnet deployment requires separate credentials and `HEDERA_ALLOW_MAINNET_WRITES=true`; none has been attempted.
+Mainnet writes, other installed wallets and the latest hosted deployment have separate pending gates. The optional reference integration builds upstream source in a local cache and does not redistribute that source or binary. Review its [compatibility and licensing notes](packages/neuron-reference/README.md#exact-compatibility-target) before distribution.
 
-## Trust labels
+## Documentation
 
-Legacy directory records are public metadata. Matching a public key and topic against Mirror establishes only that the record is consistent with those on-chain resources. HCS consensus confirms the bytes and payer shown in `/evidence`; it does not prove physical sensor provenance, current data delivery, a signed Agent Card, or payment execution.
+- [Configuration and recovery](docs/configuration.md)
+- [Architecture and protocol boundaries](docs/architecture.md)
+- [Linux testnet deployment](deploy/testnet/README.md)
+- [Checks and testnet evidence](docs/verification.md)
+- [Mainnet release requirements](docs/mainnet.md)
+- [AI-assisted development](AGENTS.md)
 
-For the full product scope, architecture and test gates, read [AGENTS.md](AGENTS.md), the [specification](docs/superpowers/specs/2026-09-25-neuron-customer-app.md), the [implementation plan](docs/superpowers/plans/2026-09-25-neuron-customer-app.md), and the [source ledger](docs/source-ledger-2026-09-26.md).
+[MIT](LICENSE) for this repository's original code. Dependencies retain their own licenses.
