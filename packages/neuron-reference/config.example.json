@@ -1,0 +1,23 @@
+{
+  "network": "testnet",
+  "operatorAccountId": "0.0.REPLACE",
+  "operatorKeyFile": "/absolute/owner-only/operator.der",
+  "buyerProtocolKeyFile": "/absolute/owner-only/buyer-protocol.hex",
+  "sellerAccountId": "0.0.REPLACE",
+  "sellerKeyFile": "/absolute/owner-only/seller.hex",
+  "buyerTopicId": "0.0.REPLACE",
+  "sellerTopicId": "0.0.REPLACE",
+  "escrowAddress": "0xREPLACE",
+  "escrowRuntimeCodeHash": "0xREPLACE",
+  "tokenAddress": "0xREPLACE",
+  "tokenRuntimeCodeHash": "0xREPLACE",
+  "tokenDecimals": 18,
+  "tokenSymbol": "NTT",
+  "priceBaseUnits": "10000000000000000",
+  "sourceFile": "/absolute/path/to/your/permitted-document.md",
+  "refundAfterSeconds": 600,
+  "rpcUrl": "https://testnet.hashio.io/api",
+  "maxSessions": 10,
+  "maxHcsFeeTinybar": 100000000,
+  "maxSellerGasPriceWei": "5000000000000"
+}

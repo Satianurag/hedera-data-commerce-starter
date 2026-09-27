@@ -1,5 +1,7 @@
 # Neuron Customer App Implementation Plan
 
+> **27 September implementation decision:** [CURRENT_WORK.md](../../CURRENT_WORK.md) is the authoritative remaining-work list. Self-operated reference sellers are valid integration targets. Historical requirements for an independently owned seller or a Discord reply do not block versioned reference integration. The three release milestones below remain distinct; preserve completed evidence and avoid rerunning all historical gates after each change.
+
 > **For agentic workers:** Checkboxes track *complete tasks*, so partial work remains unchecked. The latest user instruction explicitly resumes **coding the full product**. Keep the real-infrastructure, no-mocks, end-to-end objective; earlier small-slice/bounty gates are milestones, not the completion definition. Read [AGENTS.md](../../../AGENTS.md) for current evidence.
 
 > **Sequencing update (26 September):** the owner wants testing at the very last. Finish remaining implementation before the final consolidated compatibility, edge-case, live-testnet and separate mainnet release checks. The hosted HTTPS pilot and the controlled quote-to-refund loopback run now have distinct testnet evidence; neither proves external seller checkout, an installed browser wallet, or mainnet.

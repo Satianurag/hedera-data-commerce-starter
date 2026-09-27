@@ -2,6 +2,12 @@
 
 **Last reviewed:** 27 September 2026. This file is the short entry point for a future coding agent. Read the linked documents before changing product files. Update this memo when a decision, version pin, test result, or blocker changes. Never copy secrets into this file.
 
+## Current implementation checkpoint — 27 September 2026
+
+Read [the finite current work list](docs/CURRENT_WORK.md) first. It supersedes stale unchecked items and external-owner/Discord prerequisites in the historical plan below. The owner resumed implementation after a read-only diagnosis. A self-operated seller can establish interoperability with its explicitly pinned implementation; different human ownership is not required. Legacy scheduled payments, the upstream draft-008 ERC20 binding, and this starter's native-HBAR quote are different protocols and must have separate adapters.
+
+Current work adds a reproducible, reference-backed file-delivery service and browser ERC20 payment flow, while preserving the existing legacy aviation and native-HBAR paths. Use actual owner-selected file bytes (the project README is the local example), real testnet HCS and real deployed escrow. Do not describe document delivery as live aviation. Finish implementation before the consolidated checks; do not repeat historical mock demos or entire version matrices after every edit. Mainnet remains a separate requested milestone with explicit credentials and a bounded release decision. Keep the repository private.
+
 ## User intent and scope
 
 - Build a professional, reusable **Neuron customer app starter** on Scaffold-HBAR. A normal web user should be able to find a service, check its identity/status, start and consume data, and understand Hedera proof and eventual payment. Aviation is an example; the components should be reusable.

@@ -18,6 +18,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             <Link href="/services">Services</Link>
             <Link href="/sessions">Testnet stream</Link>
             <Link href="/commerce">Quote review</Link>
+            <Link href="/reference">Reference purchase</Link>
             <Link href="/evidence">HCS evidence</Link>
           </nav>
         </header>

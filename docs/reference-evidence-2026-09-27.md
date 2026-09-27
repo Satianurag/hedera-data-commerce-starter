@@ -1,0 +1,52 @@
+# Reference integration evidence — 27 September 2026
+
+This records the new reference document service separately from historical legacy aviation streaming and the starter-specific native-HBAR escrow. Work is in progress; unlisted commerce outcomes have not passed.
+
+## Source and runtime
+
+- Reference source: `NeuronInnovations/neuron-specs@13ab01d70ac42531065094a52cd595ef7b6d3223`, rechecked on 27 September. The original wrapper is in `packages/neuron-reference`; it imports original upstream Go components in an external pinned checkout.
+- Node default: `22.23.3`, supported Node 22 LTS; existing mutually compatible package lock retained. No forced major dependency update. The reference Go build selects `1.26.8` and records dependency patches in build provenance.
+- Repository `Satianurag/neuron-customer-app-scaffold-hbar` was independently read as `PRIVATE` during this run. No publication was performed.
+- A frozen copy of the project's README is the real file being offered: **29,099 bytes**, SHA-256 `cf915d1268763dadfabf3dc9902899a41eee852c3be871fcf5738a1001ade413`. It is a document, not sensor data. Both actual QUIC peers run on the local host.
+
+## Testnet resources
+
+The setup command durably recorded transaction IDs before sending and reconciled official Mirror results. The SDK receipt lookup returned `UNKNOWN`; Mirror independently confirmed `SUCCESS`. A read-only rerun reused the same resources.
+
+| Resource | ID | Transaction |
+| --- | --- | --- |
+| Buyer protocol inbox | `0.0.10740349` | [`0.0.10725146@1790489627.985170583`](https://testnet.mirrornode.hedera.com/api/v1/transactions/0.0.10725146-1790489627-985170583) |
+| Seller inbox | `0.0.10740354` | [`0.0.10725146@1790489634.739818059`](https://testnet.mirrornode.hedera.com/api/v1/transactions/0.0.10725146-1790489634-739818059) |
+
+Each topic cost 25,631,823 tinybar, totaling **0.51263646 testnet HBAR**. Topics are open, have no custom fees, and their admin keys match the fresh operator. Private runtime state and keys stay outside the repository.
+
+Previously deployed reference contracts were rechecked against compiled runtime bytes on chain **296**:
+
+| Contract | Address | Runtime Keccak-256 |
+| --- | --- | --- |
+| Upstream NeuronEscrow `0.0.10709683` | `0x4b6f531464782fc92df193c06811d1b930c20460` | `0x6fde0350e725af80a8ed48591c9bb8442bc44593577df6ef555c037eb30fa27e` |
+| Neuron Test Token `0.0.10709685` | `0x31f5a82bbc6f79d9846612f29bef3d7fcbbf610d` | `0xeabc65215107582d1275faaf907a8fdd0348dc981562d62d511c784dee9811bd` |
+
+NTT has 18 decimals. This service is priced at `10000000000000000` token base units (**0.01 NTT**). HBAR pays network fees only.
+
+## Installed browser wallet
+
+The owner created a disposable wallet in the isolated **Google Chrome for Testing 151.0.7922.34** profile with official **MetaMask 13.50.0**. Its public address is `0xa2657414d8B7a73b48EA1CA30B1458a14cB18DF8`. Its recovery material was disclosed by the owner and must never be stored here or used for mainnet.
+
+Hedera testnet was added using chain **296**, `https://testnet.hashio.io/api`, and symbol HBAR, matching [Hedera's current setup documentation](https://docs.tokenization-studio.hedera.com/ats/getting-started/quick-start/). The installed extension connected to `http://127.0.0.1:3000` and displayed the exact wallet, origin, chain, nonce and five-minute expiry in its signature dialog. The operator approved the sign-in signature through the actual wallet UI. The app displayed the same signed-in address and an active owner-bound SQLite session; no payment was authorized by this message.
+
+The first challenge attempt returned 503 because the local `better-sqlite3` native binding was absent. `npm rebuild better-sqlite3` under Node 22.23.3 installed the matching official prebuild; the subsequent challenge, signature and verification succeeded. This was an installation defect, not a wallet protocol failure.
+
+## Final code checks
+
+Under Node **22.23.3**, the consolidated production build and test command passed **43 shared tests, eight Foundry tests and 22 Next tests**, with one intentional opt-in test skipped. Typecheck, lint and the complete npm dependency tree passed; npm audit reported **zero vulnerabilities**. Logs are retained outside the repository. Turbopack emitted a nonfatal file-tracing warning for the workspace path boundary calculation; no dependency or build failure occurred.
+
+The pinned bridge built successfully, its two focused tests and `go vet` passed, and `govulncheck` found **zero reachable or imported-package vulnerabilities**. One finding exists in an unused required module. The built binary SHA-256 is `2e7cfa3902b8363dbfd46868c0fe4e301174aa1eb7f3fa3e083b5f5dc0a3d327`. Read-only startup preflight verified chain, deployed bytecode, account keys, seller alias, topic metadata, token metadata and source hash against the actual configured testnet resources.
+
+## Completion gates
+
+- Installed MetaMask testnet connection and signature: **passed**.
+- Real document delivery, invoice, payment and seller token receipt: **pending**.
+- Independently funded buyer timeout refund: **pending**.
+- Final consolidated candidate code checks: **passed** as detailed above; live commerce remains a separate gate.
+- Updated hosted deployment, other installed wallets and mainnet writes: **not established by this run**.
