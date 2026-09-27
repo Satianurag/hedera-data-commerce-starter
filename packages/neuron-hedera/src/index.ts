@@ -1,6 +1,6 @@
 export { networkConfigFromEnv, assertEvmRpcNetwork } from "./network.js";
 export type { HederaNetwork, NetworkConfig } from "./network.js";
-export { getMirrorAccount, getMirrorTopic } from "./mirror.js";
+export { getMirrorAccount, getMirrorTopic, getMirrorContract } from "./mirror.js";
 export { getLatestTopicMessage, getTopicMessageBySequence } from "./hcs.js";
 export type { TopicMessage } from "./hcs.js";
 export { inspectSignedTopicEnvelope } from "./signed-topic.js";

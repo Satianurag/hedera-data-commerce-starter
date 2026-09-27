@@ -13,6 +13,12 @@ type MirrorTopic = {
   submit_key: unknown;
 };
 
+type MirrorContract = {
+  contract_id: string;
+  deleted: boolean;
+  evm_address: string;
+};
+
 export async function readJsonLimited(response: Response, maxBytes = 1_048_576): Promise<unknown> {
   const reader = response.body?.getReader();
   if (!reader) throw new Error("JSON response has no body");
@@ -72,4 +78,14 @@ export async function getMirrorTopic(config: NetworkConfig, topicId: string): Pr
     throw new Error(`Mirror topic ${topicId} is missing, deleted or malformed on ${config.network}`);
   }
   return data as MirrorTopic;
+}
+
+export async function getMirrorContract(config: NetworkConfig, contractId: string): Promise<MirrorContract> {
+  assertHederaId(contractId, "contractId");
+  const data = await mirrorJson(config, `/api/v1/contracts/${contractId}`) as Partial<MirrorContract>;
+  if (data.contract_id !== contractId || data.deleted !== false ||
+      typeof data.evm_address !== "string" || !/^0x[0-9a-fA-F]{40}$/.test(data.evm_address)) {
+    throw new Error(`Mirror contract ${contractId} is missing, deleted or malformed on ${config.network}`);
+  }
+  return data as MirrorContract;
 }

@@ -109,7 +109,12 @@ export default function SessionsPage() {
       if (revision !== authRevision.current) return;
       setRequestEnabled(true);
       setSellerRequest(body.request ?? null);
-    } catch { if (revision === authRevision.current) setRequestMessage("Seller request status is unavailable"); }
+    } catch {
+      if (revision === authRevision.current) {
+        setRequestEnabled(false);
+        setRequestMessage("Seller request status is unavailable");
+      }
+    }
   }
 
   useEffect(() => {
