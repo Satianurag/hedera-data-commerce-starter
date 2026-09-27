@@ -4,6 +4,8 @@ An independent Scaffold-HBAR customer application starter for exploring Neuron s
 
 ## Current implementation
 
+**27 September checkpoint:** the new opt-in `/reference` purchase path connects pinned upstream Neuron Go protocol packages to an owner-run file service and ERC20 escrow. It is being integrated and has not yet passed its live browser purchase gate. See [the current work memo](docs/CURRENT_WORK.md) and [reference service setup](packages/neuron-reference/README.md). Legacy aviation streaming and the starter's native-HBAR extension below have separate evidence; their historical results do not verify this new path.
+
 - Next.js app: `/`, `/services`, `/services/[accountId]`, `/evidence?topic=0.0...`, and `/sessions` for an opt-in testnet stream.
 - Testnet legacy directory: live records from `https://explorer.neuron.world/api/v1/device/wip-all`. A selected seller's DER public key is compared with its testnet Mirror account key; stdin/stdout topic metadata must exist.
 - HCS evidence: latest message read from the selected network's Mirror Node, with bounded pagination, chunk reassembly, payer, sequence, consensus time, payload length and SHA-256.
@@ -30,7 +32,7 @@ The wallet-authenticated API request path and the browser's actual **Request sel
 
 ## Run
 
-Use Node **20.18.3** or **22.23.3**. The versions in `package-lock.json` were selected for compatibility with the Node 20 floor.
+Use Node **22.23.3**, selected by `.nvmrc` and current in the supported Node 22 LTS branch as of 27 September 2026. The existing compatible lockfile is retained. Earlier Node 20 checks are historical; Node 20 is now end of life and is not the deployment default.
 
 The GitHub repository is **private** at the owner's request as of 26 September 2026. An anonymous `create-scaffold-hbar --template owner/repo` clone currently cannot work. The following command passed while the repository was public and is retained as historical release evidence:
 

@@ -16,6 +16,8 @@
     "test": "npm run build -w @neuron/hedera && npm run build -w @neuron/nextjs && npm run test -w @neuron/hedera && npm run test -w @neuron/foundry && npm run test -w @neuron/nextjs",
     "test:live": "npm run build -w @neuron/hedera && npm run test:live -w @neuron/hedera",
     "hcs:submit": "cd packages/neuron-go && go run ./cmd/hcs-submit",
+    "reference:build": "node packages/neuron-reference/scripts/prepare.mjs",
+    "reference:setup": "cd packages/neuron-go && go run ./cmd/reference-setup",
     "contract:deploy": "npm run build -w @neuron/foundry && npm run deploy -w @neuron/foundry",
     "dev": "npm run build -w @neuron/hedera && npm run dev -w @neuron/nextjs",
     "start": "npm run start -w @neuron/nextjs"

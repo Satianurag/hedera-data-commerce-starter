@@ -14,6 +14,7 @@ export default function HomePage() {
       <div className="actions">
         <Link className="button" href="/services">Explore services</Link>
         <Link className="button secondary" href="/evidence">Inspect HCS topic</Link>
+        <Link className="button secondary" href="/reference">Reference file service</Link>
       </div>
     </section>
   );
