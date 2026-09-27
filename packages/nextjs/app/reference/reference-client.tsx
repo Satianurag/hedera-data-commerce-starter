@@ -5,6 +5,7 @@ import { formatUnits } from "ethers";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { InjectedWalletPicker } from "../wallet/picker";
 import { assertInjectedWallet, selectedInjectedWallet, subscribeWalletInvalidation } from "../wallet/injected";
+import { prepareReferenceGas } from "../../lib/reference-gas";
 import { parseReferenceConfig, parseReferenceSession, referenceWalletFailure, validateReferenceTransaction,
   type ReferenceConfig, type ReferenceKind, type ReferenceSession } from "../../lib/reference-types";
 
@@ -135,6 +136,8 @@ export default function ReferenceClient({ network }: { network: "testnet" | "mai
       validateReferenceTransaction(intent.transaction, prepared, config);
       const key = savedHashKey(prepared.id, intent.id);
       if (savedHash(key)) throw new Error("A transaction hash already exists for this intent. Reconcile it before opening the wallet again.");
+      setMessage("Checking the buffered gas limit, maximum network fee and available HBAR…");
+      const gas = await prepareReferenceGas(wallet.provider, customer.ownerAddress, intent.transaction);
       try { await assertBuyer(); } catch (error) {
         if (!retryingUncertain) apply(await requestJSON(`/api/reference/sessions/${prepared.id}`, { action: "cancel", intentId: intent.id }), customer.ownerAddress);
         throw error;
@@ -154,9 +157,10 @@ export default function ReferenceClient({ network }: { network: "testnet" | "mai
       }
       let result: unknown;
       try {
-        setMessage("Review and approve this single testnet transaction in your wallet.");
+        setMessage(`Review this single testnet transaction in your wallet. Maximum network fee: ${formatUnits(gas.maximumFeeWei, 18)} HBAR.`);
         result = await wallet.provider.request({ method: "eth_sendTransaction", params: [{ from: customer.ownerAddress,
-          to: intent.transaction.to, data: intent.transaction.data, value: "0x0", chainId: "0x128", nonce: intent.transaction.nonce }] });
+          to: intent.transaction.to, data: intent.transaction.data, value: "0x0", chainId: "0x128", nonce: intent.transaction.nonce,
+          gas: gas.gas, gasPrice: gas.gasPrice }] });
       } catch (error) {
         if (!retryingUncertain && error && typeof error === "object" && "code" in error && error.code === 4001) {
           apply(await requestJSON(`/api/reference/sessions/${prepared.id}`, { action: "wallet-rejected", intentId: intent.id }), customer.ownerAddress);

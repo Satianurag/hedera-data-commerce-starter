@@ -45,6 +45,46 @@ NEURON_REFERENCE_LISTEN=127.0.0.1:8098
 
 Start the prepared binary without arguments. `--check` runs read-only account/topic/chain/bytecode/token preflight and emits public configuration. For the Next app set `NEURON_REFERENCE_URL=http://127.0.0.1:8098` and its server-only `NEURON_REFERENCE_API_TOKEN_FILE`. Its existing testnet customer authentication must also be configured. The bridge binds only loopback, requires the bearer, rejects browser Origin headers and accepts session requests only from the authenticated application proxy.
 
+## Restart the configured local service
+
+Use Node **22.23.3** from `.nvmrc` for installation, build and startup. `better-sqlite3` has a native binding for that Node runtime and operating system. If its binding is missing or has an ABI mismatch, select the intended Node version first, then run `npm rebuild better-sqlite3` in the repository root.
+
+Keep a trusted, operator-maintained shell environment file outside the repository, mode 0600 in a 0700 directory. Include the bridge variables above with their existing paths, plus:
+
+```text
+NEURON_REFERENCE_BINARY=/absolute/operator-cache/neuron-reference
+HEDERA_NETWORK=testnet
+NEURON_ENABLE_REFERENCE_COMMERCE=true
+NEURON_ENABLE_CUSTOMER_AUTH=true
+NEURON_APP_ORIGIN=http://127.0.0.1:3000
+NEURON_CUSTOMER_DB_FILE=/absolute/owner-only/customer.sqlite
+NEURON_REFERENCE_URL=http://127.0.0.1:8098
+```
+
+From the repository root, load that same file in each terminal using its actual absolute path. Start the bridge in the first terminal:
+
+```sh
+nvm use
+set -a
+. /absolute/owner-only/reference-runtime.env
+set +a
+"$NEURON_REFERENCE_BINARY"
+```
+
+After the bridge reports ready on `127.0.0.1:8098`, start the existing production build in a second terminal:
+
+```sh
+nvm use
+set -a
+. /absolute/owner-only/reference-runtime.env
+set +a
+npm run start -w @neuron/nextjs -- --hostname 127.0.0.1 --port 3000
+```
+
+Open `http://127.0.0.1:3000/reference` and sign in with the same testnet wallet when its login expires. After source changes, run `npm run build` under the same Node version before startup.
+
+Routine shutdown and restart must retain the customer SQLite database and its WAL/SHM files, bridge journals, received files, bearer-token file, and the exact original configuration/source bytes. Even reformatting the configuration changes its fingerprint. Reuse the recorded paths; clearing history or replacing a state directory can strand transaction recovery. Configuration changes require a separately reviewed migration with preserved originals. Restart performs preflight; use the saved session and transaction hash to reconcile an interrupted wallet operation before another payment.
+
 ## Customer flow and recovery
 
 The `/reference` page negotiates a document session, displays exact signed terms and requests these individual wallet decisions: create escrow, approve the exact token amount, then deposit. After funding, **Receive document** runs actual reference P2P delivery, independently hashes the received bytes, saves them, requests the seller's onchain release and publishes its signed invoice. The customer can download/review the document, then explicitly approve payment. **Settle** lets the seller withdraw only that approved amount to its own address. Alternatively the buyer can claim the exact remaining deposit after the deadline.
