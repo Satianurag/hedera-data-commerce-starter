@@ -28,9 +28,9 @@ function fixture(saved = new Map()) {
     },
     setTimeout(fn) { timers.push(fn); },
   };
-  const module = { exports: {} };
-  vm.runInNewContext(compiled, { window: browser, Event, module, exports: module.exports });
-  return { api: module.exports, browser, flushTimers: () => timers.splice(0).forEach(fn => fn()) };
+  const commonjs = { exports: {} };
+  vm.runInNewContext(compiled, { window: browser, Event, module: commonjs, exports: commonjs.exports });
+  return { api: commonjs.exports, browser, flushTimers: () => timers.splice(0).forEach(fn => fn()) };
 }
 
 function provider() {
