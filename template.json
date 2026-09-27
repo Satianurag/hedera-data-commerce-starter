@@ -1,6 +1,6 @@
 {
   "name": "Neuron Customer App Starter",
-  "description": "Next.js Neuron service discovery and Hedera evidence with a Foundry native-HBAR escrow package",
+  "description": "Next.js Neuron service discovery, reference file delivery and Hedera evidence with separate Foundry contracts",
   "version": "0.1.0",
   "create-scaffold-hbar": {
     "capabilities": {
@@ -22,17 +22,14 @@
         {
           "title": "Verify the template",
           "steps": [
-            { "command": "npm run build" },
-            { "command": "npm run typecheck" },
-            { "command": "npm run lint" },
-            { "command": "npm test" }
+            { "command": "npm run verify" }
           ]
         },
         {
           "title": "Run the read-only app",
           "steps": [
             { "command": "npm run dev" },
-            { "text": "See README.md for local testnet seller sessions and server-only transaction commands." }
+            { "text": "No credentials are needed for read-only mode. See README.md and docs/configuration.md to enable a testnet adapter." }
           ]
         }
       ]

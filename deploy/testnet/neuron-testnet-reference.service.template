@@ -1,5 +1,5 @@
 [Unit]
-Description=Neuron customer testnet Next.js app on loopback
+Description=Neuron testnet reference file service on loopback
 Wants=network-online.target
 After=network-online.target
 
@@ -7,22 +7,21 @@ After=network-online.target
 Type=simple
 User=neuron-testnet
 Group=neuron-testnet
-WorkingDirectory=__NEXT_SERVER_DIRECTORY__
-EnvironmentFile=/var/lib/neuron-customer-testnet/app.env
-Environment=NODE_ENV=production
-Environment=HOSTNAME=127.0.0.1
-Environment=PORT=3000
-Environment=HEDERA_NETWORK=testnet
-Environment=NODE_OPTIONS=--max-old-space-size=256
-ExecStart=__NODE_BINARY__ __NEXT_SERVER_JS__
+WorkingDirectory=/var/lib/neuron-customer-testnet
+Environment=NEURON_REFERENCE_CONFIG_FILE=/var/lib/neuron-customer-testnet/reference-config.json
+Environment=NEURON_REFERENCE_API_TOKEN_FILE=/var/lib/neuron-customer-testnet/reference-api-token
+Environment=NEURON_REFERENCE_STATE_DIR=/var/lib/neuron-customer-testnet/reference-sessions
+Environment=NEURON_REFERENCE_LISTEN=127.0.0.1:8098
+Environment=GOMEMLIMIT=200MiB
+ExecStart=/var/lib/neuron-customer-testnet/bin/neuron-reference
 Restart=on-failure
 RestartSec=5s
-TimeoutStopSec=20s
+TimeoutStopSec=30s
 UMask=0077
 StateDirectory=neuron-customer-testnet
 StateDirectoryMode=0700
 ReadWritePaths=/var/lib/neuron-customer-testnet
-MemoryMax=450M
+MemoryMax=300M
 LimitNOFILE=4096
 NoNewPrivileges=true
 PrivateTmp=true

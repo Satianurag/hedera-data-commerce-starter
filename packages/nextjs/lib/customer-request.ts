@@ -89,10 +89,6 @@ function requestConfig(): RequestConfig {
   };
 }
 
-export function checkCustomerRequestConfiguration(): void {
-  requestConfig();
-}
-
 /** Gate a newly advertised testnet request path on current Mirror metadata. */
 export async function preflightCustomerRequestDescriptor(): Promise<void> {
   const config = requestConfig();

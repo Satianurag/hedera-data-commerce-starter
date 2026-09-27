@@ -14,6 +14,7 @@
     "typecheck": "npm run typecheck -w @neuron/hedera && npm run typecheck -w @neuron/nextjs",
     "lint": "npm run lint -w @neuron/nextjs",
     "test": "npm run build -w @neuron/hedera && npm run build -w @neuron/nextjs && npm run test -w @neuron/hedera && npm run test -w @neuron/foundry && npm run test -w @neuron/nextjs",
+    "verify": "npm test && npm run typecheck && npm run lint && npm ls --all && npm audit --audit-level=low",
     "test:live": "npm run build -w @neuron/hedera && npm run test:live -w @neuron/hedera",
     "hcs:submit": "cd packages/neuron-go && go run ./cmd/hcs-submit",
     "reference:build": "node packages/neuron-reference/scripts/prepare.mjs",
