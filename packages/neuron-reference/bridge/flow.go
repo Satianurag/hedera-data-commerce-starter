@@ -67,7 +67,7 @@ func (s *server) negotiate(v *session) error {
 }
 func (s *server) deliver(v *session) error {
 	if v.State != "funded" && v.State != "delivered" && v.State != "invoiced" {
-		return errors.New("delivery requires an exactly funded escrow")
+		return errors.New("delivery requires a funded escrow")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -78,8 +78,8 @@ func (s *server) deliver(v *session) error {
 	if e != nil {
 		return e
 	}
-	if esc.Balance.Cmp(integer(s.cfg.PriceBaseUnits)) != 0 || esc.State != 1 {
-		return errors.New("escrow is not funded for the exact amount")
+	if esc.Balance.Cmp(integer(s.cfg.PriceBaseUnits)) < 0 || esc.State != 1 {
+		return errors.New("escrow does not cover the negotiated amount")
 	}
 	if uint64(time.Now().Unix()+30) >= v.Deadline {
 		return errors.New("delivery window expired; claim the timeout refund")
@@ -252,7 +252,7 @@ func (s *server) transferDocument(v *session) error {
 	return s.save(v)
 }
 func (s *server) settle(v *session) error {
-	if v.State == "paid" {
+	if v.State == "paid" || v.State == "paid-with-remainder" {
 		return nil
 	}
 	if v.State != "approved" {
@@ -288,10 +288,16 @@ func (s *server) settle(v *session) error {
 	if e != nil {
 		return e
 	}
-	if state != 2 || esc.State != 2 || esc.Balance.Sign() != 0 {
+	if state != 2 || (esc.State != 1 && esc.State != 2 && esc.State != 3) {
 		return errors.New("settled escrow state mismatch")
 	}
 	v.State = "paid"
+	v.PaidAmountBaseUnits = s.cfg.PriceBaseUnits
+	v.RemainingBalanceBaseUnits = esc.Balance.String()
 	v.Message = "Seller received the exact negotiated test ERC20 amount; escrow is empty."
+	if esc.Balance.Sign() > 0 {
+		v.State = "paid-with-remainder"
+		v.Message = "Seller received only the negotiated amount. Remaining tokens can be refunded by the buyer after the deadline."
+	}
 	return s.save(v)
 }

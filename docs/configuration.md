@@ -22,6 +22,8 @@ Use one hostname consistently: `localhost` and `127.0.0.1` are different origins
 
 Installed MetaMask has full reference checkout evidence. Other injected wallets and the optional WalletConnect/HashPack path require their own handshake, signature and transaction checks. The WalletConnect dependency retains its upstream licensing and service terms. Native Hedera/Ed25519 wallets are not interchangeable with this EVM signature path.
 
+WalletConnect uses one SDK Core per page. Cancellation removes the wallet selection immediately and bounds local teardown; a pending SDK proposal may settle later. A new attempt waits for that settlement and cleanup, while a stalled or failed cleanup requires reloading the page. Late approvals cannot select a cancelled wallet. The lifecycle tests exercise real SDK heartbeat timers and idle relay open/close APIs; relay pairing, mobile approval and WalletConnect payments still require a configured project and separate live evidence.
+
 ## Reference document commerce
 
 Follow [the adapter guide](../packages/neuron-reference/README.md) to provision your own accounts/topics, token and ERC20 escrow, choose a permitted immutable file and build the pinned bridge. No owner test resources are configured by default.
@@ -38,7 +40,7 @@ The bridge independently needs `NEURON_REFERENCE_CONFIG_FILE`, `NEURON_REFERENCE
 
 ## Legacy streaming
 
-Build the Go commands from `packages/neuron-go` with Go 1.26.8:
+Build the Go commands from `packages/neuron-go` with Go 1.27.1:
 
 ```sh
 go build -o /absolute/private/bin/legacy-gateway ./cmd/legacy-gateway
@@ -79,15 +81,17 @@ The legacy protocol needs inbound UDP on a reachable host. A temporary tunnel ca
 
 This is a separate optional `/commerce` flow using `neuronCustomerQuote/v1`, not the reference ERC20 invoice.
 
+For a seller you operate, follow the [native seller guide](native-seller.md). Explicit `direct` discovery pins its account, current public key, topics and protocols in an owner-only profile, with independent Mirror checks. It does not require an entry in the hosted aviation directory. The default `canonical` discovery mode remains separate; there is no automatic fallback. Share the same profile with Next, the gateway and seller command.
+
 | Switch | Additional configuration |
 | --- | --- |
 | `NEURON_ENABLE_CUSTOMER_COMMERCE_REVIEW=true` | Customer auth, `NEURON_COMMERCE_SELLER_ACCOUNT_ID`, `NEURON_COMMERCE_QUOTE_TOPIC_ID`, `NEURON_COMMERCE_SERVICE_ID`, `NEURON_COMMERCE_MAX_SPEND_TINYBAR` (at most 1 HBAR), `HEDERA_CONTRACT_ID`, checksummed `HEDERA_CONTRACT_ADDRESS` |
 | `NEURON_ENABLE_CUSTOMER_FUNDING=true` | Explicit HTTPS testnet `HEDERA_RPC_URL`, exact `NEURON_ESCROW_RUNTIME_SHA256`, `NEURON_COMMERCE_MAX_TX_FEE_TINYBAR` (at most 100,000,000), approval switch for new funding |
 | `NEURON_ENABLE_CUSTOMER_APPROVAL=true` | Same funding gates, gateway token and internal origin, matching gateway/quote seller, service ID `1`, completed same-session positive-byte transport evidence and explicit buyer acknowledgement |
 
-Deploy your own [native-HBAR contract](../packages/foundry/src/BuyerEscrow.sol) using `npm run contract:deploy` with `HEDERA_NETWORK=testnet`, `HEDERA_OPERATOR_ACCOUNT_ID`, `HEDERA_OPERATOR_KEY_FILE`, `HEDERA_MAX_FEE_TINYBAR` and `HEDERA_CONTRACT_GAS`. The signer must be an ECDSA EVM-alias account. Deployment validates account/key, RPC chain and resulting runtime code.
+Deploy your own [native-HBAR contract](../packages/foundry/src/BuyerEscrow.sol) using `npm run contract:deploy` with `HEDERA_NETWORK=testnet`, `HEDERA_OPERATOR_ACCOUNT_ID`, `HEDERA_OPERATOR_KEY_FILE`, `HEDERA_DEPLOYMENT_JOURNAL_FILE`, `HEDERA_MAX_FEE_TINYBAR` and `HEDERA_CONTRACT_GAS`. The signer must be a dedicated ECDSA EVM-alias account. Deployment validates account/key, RPC chain and resulting runtime code. The mandatory journal is an absolute path outside the checkout in an owner-only directory; its signed transaction, nonce and computed hash are persisted before broadcasting. Resume with the same journal and unchanged configuration after a timeout or restart. Do not delete, replace or use a new journal to retry an uncertain deployment. A companion SQLite file provides a process-crash-safe lock. Both files remain private; the journal contains replayable signed transaction bytes. Fees are capped at 1 HBAR, and mainnet deployment is disabled pending its separate release.
 
-A seller must publish real signed terms on its configured HCS topic. Directory prices are not checkout quotes. Byte counts do not prove service quality; buyer approval is an explicit decision. Existing timeout recovery remains available when new funding is disabled. Installed-wallet native-HBAR checkout and external legacy seller acceptance are unverified.
+A seller must publish real signed terms on its configured HCS topic. Directory prices are not checkout quotes. Byte counts do not prove service quality; buyer approval is an explicit decision. Existing timeout recovery remains available when new funding is disabled. The audit exercised native-HBAR funding and refund with an installed MetaMask wallet. The complete canonical-directory seller request → transport → approval browser flow and external legacy seller acceptance remain unverified.
 
 ## Submit HCS evidence
 
@@ -108,7 +112,7 @@ The writer prints a preassigned ID and payload hash before sending, then checks 
 
 | Symptom | Action |
 | --- | --- |
-| `better-sqlite3` binding missing or ABI mismatch | Select Node from `.nvmrc`, then `npm run rebuild:native`; build Linux artifacts on Linux |
+| `better-sqlite3` native binding missing or incompatible | Select Node from `.nvmrc`, then `npm run rebuild:native`; build Linux artifacts on Linux |
 | Auth disabled or origin rejected | Check explicit testnet, exact origin/Host and private DB directory; HTTPS also requires allowlist |
 | Read-only page reports unavailable | Check current public directory/Mirror availability; retain the unverified state |
 | WebSocket connected but no bytes | Check seller request, selected PeerID, UDP reachability and current seller availability; heartbeat alone is insufficient |
@@ -123,3 +127,15 @@ npm run request:reconcile -w @neuron/nextjs -- <request-id>
 ```
 
 This checks the saved transaction ID, hash, topic, payer and bytes without submitting again. Unmatched rows stay blocked. For reference sessions, use the saved transaction hash and the app's refresh/recovery controls. Retain SQLite state, bridge journals, downloaded files, token, source and exact configuration together across restarts. Follow [the reference restart procedure](../packages/neuron-reference/README.md#restart-the-configured-local-service).
+
+### Native payment recovery
+
+Never delete the SQLite journal to retry. Every wallet opening now stores a nonce and an opening reference before returning a transaction; returned hashes attach to that exact opening. Retries retain earlier transactions, including late returned hashes. Refresh/restart and signing in again with the same buyer preserve owned escrow history. Another wallet or origin cannot recover it.
+
+- **Funding cancelled or interrupted before a hash was reported:** check wallet history and **Check chain outcome**. After one minute, with more than two minutes left on the quote, acknowledge the warning and use **Recheck and retry funding wallet**. The original authenticated session, reviewed terms, buyer, contract, value, calldata and nonce must match; the quote, seller, runtime, gas and balance are rechecked. The server refuses a reported hash, pending/consumed nonce, changed attempt or already-used terms. Gas estimates may change, but a fresh payment nonce is never allocated. Every opening remains recorded. Failed, nonce-less or expired funding uses the closure path below instead.
+- **Expired funding (including a confirmed revert):** use **Check whether expired quote can be closed**. The server rechecks failure evidence, the pinned runtime, unused buyer/terms mapping at a post-expiry block, and the complete event range. Successful, conflicting or uncertain hashed funding is not abandoned. Keep continuing a bounded scan until complete. The original transaction hashes remain saved.
+- **A new quote after closure:** sign out and sign in again on **Sessions**, return to **Commerce**, and give the seller the newly displayed session ID and buyer address. Each authenticated session accepts one reviewed quote. A quote signed for the previous session cannot be reused.
+- **Refund or approval rejected, reverted, or interrupted:** refresh its outcome. A confirmed failure can retry immediately; an uncertain opening requires a one-minute wait, then a fresh explicit acknowledgement. Refund retries recheck the original refundable escrow; approval retries also recheck the same seller key, confirmed request and completed transport. Each new opening is atomically recorded. The prior unconsumed nonce is reused; another pending wallet transaction blocks allocation of a fresh nonce. If an unknown nonce was consumed (for example by a wallet cancellation), a new nonce requires proof of the pinned runtime and the exact still-refundable/unapproved escrow at the same block as the consumed-nonce observation. If that proof is unavailable, recover the original hash from wallet history and reconcile it.
+- **Older journals without a nonce:** guarded refund/approval recovery retains an explicit legacy snapshot, its original opening count and any hash. With fresh chain checks and no pending wallet nonce, the buyer may explicitly accept a fresh attempt. An old broadcast can still succeed and charge gas; contract state permits only one effective refund or approval. This exception does not permit funding to resend: old funding must first satisfy expiry/unused-terms/event proof.
+
+A receipt timeout or wallet error is never proof of rejection. No app can stop a user changing calldata or nonce in an external wallet; authoritative receipt/event/storage checks determine the result. Recovery never removes ownership, origin, network, runtime or delivery checks. If a returned hash was lost, use the matching **hash from wallet history** field on the escrow. It attaches to the saved wallet opening and does not send another transaction. Copy the exact original contract call, not an unrelated cancellation or transfer; the server rejects mismatched transaction evidence. Pending hash saves must finish before another wallet retry.

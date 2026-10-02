@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "scripts": {
     "build": "node scripts/forge.mjs build",
-    "test": "node scripts/forge.mjs test",
+    "test": "node --test test/*.test.mjs && node scripts/forge.mjs test",
     "deploy": "node scripts/deploy.mjs",
     "test:live": "node scripts/verify-testnet.mjs"
   },

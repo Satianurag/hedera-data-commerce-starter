@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/x509/pkix"
@@ -10,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"regexp"
@@ -20,6 +20,7 @@ import (
 
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	hedera "github.com/hiero-ledger/hiero-sdk-go/v2/sdk"
+	"neuron-customer-app/neuron-go/directseller"
 	"neuron-customer-app/neuron-go/legacy"
 )
 
@@ -79,19 +80,6 @@ func publicKeyFromDER(value string) ([]byte, error) {
 	return key, nil
 }
 
-func requirePublicUDPAddress(value string) error {
-	parts := strings.Split(value, "/")
-	if len(parts) != 6 || parts[0] != "" || parts[1] != "ip4" || parts[3] != "udp" || parts[5] != "quic-v1" {
-		return errors.New("public address must be /ip4/<public-ip>/udp/<port>/quic-v1")
-	}
-	ip := net.ParseIP(parts[2])
-	port, err := strconv.ParseUint(parts[4], 10, 16)
-	if ip == nil || ip.To4() == nil || ip.IsPrivate() || ip.IsLoopback() || ip.IsUnspecified() || ip.IsMulticast() || port == 0 || err != nil {
-		return errors.New("public UDP address or port is invalid")
-	}
-	return nil
-}
-
 func parseID(value string) (uint64, error) {
 	if !hederaID.MatchString(value) {
 		return 0, errors.New("invalid Hedera ID")
@@ -103,6 +91,10 @@ func run() error {
 	if os.Getenv("HEDERA_NETWORK") != "testnet" {
 		return errors.New("legacy request is testnet-only; no mainnet seller directory is verified")
 	}
+	direct, err := directseller.LoadFromEnv()
+	if err != nil {
+		return err
+	}
 	sellerID := os.Getenv("NEURON_SELLER_ACCOUNT_ID")
 	buyerID := os.Getenv("HEDERA_BUYER_ACCOUNT_ID")
 	stdinID := os.Getenv("HEDERA_BUYER_STDIN_TOPIC_ID")
@@ -113,7 +105,7 @@ func run() error {
 		}
 	}
 	address := os.Getenv("NEURON_PUBLIC_UDP_MULTIADDR")
-	if err := requirePublicUDPAddress(address); err != nil {
+	if err := requireRequestUDPAddress(address, direct); err != nil {
 		return err
 	}
 	keyPath := os.Getenv("HEDERA_BUYER_KEY_FILE")
@@ -129,30 +121,7 @@ func run() error {
 	if err != nil || len(buyerKey.BytesRaw()) != 32 {
 		return errors.New("buyer key must be ECDSA secp256k1 DER")
 	}
-	var directory []device
-	if err := getJSON("https://explorer.neuron.world/api/v1/device/wip-all", &directory); err != nil {
-		return err
-	}
-	var seller *device
-	for i := range directory {
-		if directory[i].AccountID == sellerID {
-			seller = &directory[i]
-			break
-		}
-	}
-	if seller == nil {
-		return errors.New("seller is absent from live legacy directory")
-	}
-	serviceAvailable := false
-	for _, service := range seller.Services {
-		if service.ID == 1 {
-			serviceAvailable = true
-		}
-	}
-	if !serviceAvailable {
-		return errors.New("seller does not advertise legacy service 1")
-	}
-	sellerPublic, err := publicKeyFromDER(seller.PublicKey)
+	seller, sellerPublic, err := selectedSeller(sellerID, direct)
 	if err != nil {
 		return err
 	}
@@ -249,6 +218,43 @@ func run() error {
 	}
 	_, err = os.Stdout.Write(payload)
 	return err
+}
+
+func requireRequestUDPAddress(value string, direct *directseller.Profile) error {
+	return directseller.ValidateQUICAddress(value, direct != nil && direct.Transport == "loopback")
+}
+
+func selectedSeller(sellerID string, direct *directseller.Profile) (*device, []byte, error) {
+	if direct != nil {
+		if direct.AccountID != sellerID {
+			return nil, nil, errors.New("direct seller identity mismatch")
+		}
+		if err := directseller.CheckMirror(context.Background(), *direct); err != nil {
+			return nil, nil, err
+		}
+		key, _ := hex.DecodeString(direct.PublicKey)
+		return &device{AccountID: direct.AccountID, Stdin: direct.StdinTopicID, Stdout: direct.StdoutTopicID}, key, nil
+	}
+	var directory []device
+	if err := getJSON("https://explorer.neuron.world/api/v1/device/wip-all", &directory); err != nil {
+		return nil, nil, err
+	}
+	for _, seller := range directory {
+		if seller.AccountID != sellerID {
+			continue
+		}
+		if topic := os.Getenv("NEURON_SELLER_STDIN_TOPIC_ID"); topic != "" && topic != seller.Stdin {
+			return nil, nil, errors.New("seller directory topic differs from configured request topic")
+		}
+		for _, service := range seller.Services {
+			if service.ID == 1 {
+				key, err := publicKeyFromDER(seller.PublicKey)
+				return &seller, key, err
+			}
+		}
+		return nil, nil, errors.New("seller does not advertise legacy service 1")
+	}
+	return nil, nil, errors.New("seller is absent from live legacy directory")
 }
 
 func main() {

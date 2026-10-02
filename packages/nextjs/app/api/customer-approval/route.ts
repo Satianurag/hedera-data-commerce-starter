@@ -62,10 +62,16 @@ export async function POST(request: Request): Promise<Response> {
       if (!approvalEnabled()) return json({ error: "Buyer approval is disabled" }, 404);
       return json(await markCustomerApprovalWalletOpened(auth.session!, auth.origin!, body.approvalId, true));
     }
-    if (body.action === "attach" && Object.keys(body).sort().join(",") === "action,approvalId,transactionHash" &&
-        typeof body.approvalId === "string" && typeof body.transactionHash === "string") {
+    if (body.action === "retryWallet" &&
+        Object.keys(body).sort().join(",") === "acknowledged,action,approvalId" &&
+        typeof body.approvalId === "string" && body.acknowledged === true) {
+      return json(await markCustomerApprovalWalletOpened(auth.session!, auth.origin!, body.approvalId, true, true));
+    }
+    if (body.action === "attach" && ["action,approvalId,transactionHash", "action,approvalId,transactionHash,walletAttemptId"].includes(Object.keys(body).sort().join(",")) &&
+        typeof body.approvalId === "string" && typeof body.transactionHash === "string" &&
+        (body.walletAttemptId === undefined || typeof body.walletAttemptId === "string")) {
       return json({ approval: attachCustomerApprovalHash(auth.session!, auth.origin!, body.approvalId,
-        body.transactionHash) });
+        body.transactionHash, body.walletAttemptId as string | undefined) });
     }
     if (body.action === "reconcile" && Object.keys(body).sort().join(",") === "action,approvalId" &&
         typeof body.approvalId === "string") {

@@ -1,7 +1,8 @@
+import { loadDirectSellerProfile } from "@neuron/hedera/direct-seller-file";
 import { randomBytes } from "node:crypto";
 import type Database from "better-sqlite3";
 import { getAddress, verifyMessage } from "ethers";
-import { confirmEscrowFunding, getMirrorAccount, getMirrorContract, getMirrorTopic,
+import { confirmEscrowFunding, checkDirectSellerBinding, getMirrorAccount, getMirrorContract, getMirrorTopic,
   getVerifiedSellerQuote, networkConfigFromEnv,
   type SellerQuote, type VerifiedSellerQuote } from "@neuron/hedera";
 import { withCustomerDatabase, type CustomerSession } from "./customer-auth";
@@ -53,6 +54,7 @@ export function customerCommerceEnabled(origin: URL | null): boolean {
 
 function commerceConfig(): CommerceConfig {
   const env = process.env;
+  loadDirectSellerProfile(env);
   const sellerAccount = env.NEURON_COMMERCE_SELLER_ACCOUNT_ID ?? "";
   const quoteTopic = env.NEURON_COMMERCE_QUOTE_TOPIC_ID ?? "";
   const serviceId = env.NEURON_COMMERCE_SERVICE_ID ?? "";
@@ -87,6 +89,8 @@ export async function preflightCustomerCommerceDescriptor(): Promise<void> {
   if (network.network !== "testnet" || network.chainId !== 296) {
     throw new Error("Customer commerce requires Hedera testnet chain 296");
   }
+  const direct = loadDirectSellerProfile(process.env);
+  if (direct) await checkDirectSellerBinding(network, direct);
   const [, , contract] = await Promise.all([
     getMirrorAccount(network, config.sellerAccount),
     getMirrorTopic(network, config.quoteTopic),
@@ -194,6 +198,8 @@ function quoteExpectation(config: CommerceConfig, session: CustomerSession, now:
 async function resolveQuote(sequence: number, session: CustomerSession, config: CommerceConfig) {
   const network = networkConfigFromEnv(process.env);
   if (network.network !== "testnet") throw new Error("Customer commerce review is testnet-only");
+  const direct = loadDirectSellerProfile(process.env);
+  if (direct) await checkDirectSellerBinding(network, direct);
   return getVerifiedSellerQuote(network, config.quoteTopic, sequence,
     quoteExpectation(config, session, Math.floor(Date.now() / 1000)));
 }
@@ -234,7 +240,7 @@ export async function inspectCustomerQuote(session: CustomerSession, origin: URL
     const reviewed = db.prepare(`SELECT id FROM customer_commerce_intents
       WHERE session_id = ? AND owner_address = ? AND origin = ? AND state = 'reviewed' LIMIT 1`)
       .get(session.sessionId, session.ownerAddress, origin.origin) as { id: string } | undefined;
-    if (reviewed) throw new CommerceIssue("This customer session already reviewed a quote", 409);
+    if (reviewed) throw new CommerceIssue("This customer session already reviewed a quote; close any unresolved funding, sign out and sign in again, then request a new quote bound to the new session ID", 409);
     const recent = db.prepare("SELECT COUNT(*) AS n FROM customer_commerce_intents WHERE session_id = ?")
       .get(session.sessionId) as { n: number };
     if (recent.n >= 10) throw new CommerceIssue("Too many quotes reviewed in this customer session", 429);
@@ -288,7 +294,7 @@ export async function acceptCustomerQuote(session: CustomerSession, origin: URL,
     }
     const other = db.prepare(`SELECT id FROM customer_commerce_intents
       WHERE session_id = ? AND state = 'reviewed' LIMIT 1`).get(session.sessionId) as { id: string } | undefined;
-    if (other) throw new CommerceIssue("This customer session already reviewed a quote", 409);
+    if (other) throw new CommerceIssue("This customer session already reviewed a quote; close any unresolved funding, sign out and sign in again, then request a new quote bound to the new session ID", 409);
     const changed = db.prepare(`UPDATE customer_commerce_intents SET state = 'reviewed', reviewed_at = ?, review_signature = ?
       WHERE id = ? AND session_id = ? AND owner_address = ? AND origin = ? AND state = 'quoted' AND review_by > ?`)
       .run(commitTime, signature, id, session.sessionId, session.ownerAddress, origin.origin, commitTime);

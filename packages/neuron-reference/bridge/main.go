@@ -43,30 +43,32 @@ func response(w http.ResponseWriter, status int, value any) {
 func publicFailure(id string, e error) string {
 	log.Printf("reference session %s: %v", id, e)
 	safe := map[string]bool{
-		"transaction not indexed/confirmed yet; use refresh with the saved hash":                                                            true,
-		"receipt not indexed yet; retain saved hash and refresh":                                                                            true,
-		"submitted transaction does not match authorized buyer intent":                                                                      true,
-		"wallet has insufficient test ERC20 token balance":                                                                                  true,
-		"delivery window expired; claim the timeout refund":                                                                                 true,
-		"three delivery attempts used; wait for the buyer timeout refund":                                                                   true,
-		"HCS indexing unconfirmed; reconcile saved transaction before retry":                                                                true,
-		"seller transaction receipt pending; retry only reconciliation":                                                                     true,
-		"seller gas price exceeds configured budget":                                                                                        true,
-		"a wallet intent already exists; reconcile its hash before another transaction":                                                     true,
-		"wallet action unavailable for current state":                                                                                       true,
-		"buyer must explicitly approve the invoice in their wallet first":                                                                   true,
-		"received document differs from negotiated exact bytes":                                                                             true,
-		"seller release payee, amount or evidence mismatch":                                                                                 true,
-		"escrow does not match signed negotiation and wallet":                                                                               true,
-		"only a wallet rejection before broadcasting can be cancelled":                                                                      true,
-		"only an explicit wallet rejection before broadcast can clear this intent":                                                          true,
-		"only a prepared intent can open a wallet":                                                                                          true,
-		"historical intent has no recorded nonce; reconcile its transaction hash before continuing":                                         true,
-		"recorded wallet nonce is already used; recover the transaction hash from wallet history":                                           true,
-		"this wallet nonce is reserved by another unresolved reference purchase":                                                            true,
-		"wallet retry limit reached; reconcile the recorded nonce and transaction history":                                                  true,
-		"submitted transaction nonce does not match the recorded wallet intent":                                                             true,
-		"this wallet has an unresolved historical intent without a nonce; use its transaction history to reconcile before another purchase": true,
+		"transaction not indexed/confirmed yet; use refresh with the saved hash":                                                                     true,
+		"receipt not indexed yet; retain saved hash and refresh":                                                                                     true,
+		"submitted transaction does not match authorized buyer intent":                                                                               true,
+		"wallet has insufficient test ERC20 token balance":                                                                                           true,
+		"delivery window expired; claim the timeout refund":                                                                                          true,
+		"three delivery attempts used; wait for the buyer timeout refund":                                                                            true,
+		"HCS indexing unconfirmed; reconcile saved transaction before retry":                                                                         true,
+		"seller transaction receipt pending; retry only reconciliation":                                                                              true,
+		"seller gas price exceeds configured budget":                                                                                                 true,
+		"a wallet intent already exists; reconcile its hash before another transaction":                                                              true,
+		"wallet action unavailable for current state":                                                                                                true,
+		"buyer must explicitly approve the invoice in their wallet first":                                                                            true,
+		"received document differs from negotiated exact bytes":                                                                                      true,
+		"seller release payee, amount or evidence mismatch":                                                                                          true,
+		"escrow does not match signed negotiation and wallet":                                                                                        true,
+		"only a wallet rejection before broadcasting can be cancelled":                                                                               true,
+		"only an explicit wallet rejection before broadcast can clear this intent":                                                                   true,
+		"only a prepared intent can open a wallet":                                                                                                   true,
+		"historical intent has no recorded nonce; reconcile its transaction hash before continuing":                                                  true,
+		"recorded wallet nonce is already used; recover the transaction hash from wallet history":                                                    true,
+		"this wallet nonce is reserved by another unresolved reference purchase":                                                                     true,
+		"cancellation nonce does not match the recorded wallet intent":                                                                               true,
+		"cancellation transaction is not successfully mined":                                                                                         true,
+		"shared token allowance was consumed; cancel this unopened intent and approve the exact amount again, or reconcile an already opened intent": true,
+		"submitted transaction nonce does not match the recorded wallet intent":                                                                      true,
+		"this wallet has an unresolved historical intent without a nonce; use its transaction history to reconcile before another purchase":          true,
 	}
 	if safe[e.Error()] {
 		return e.Error()
@@ -256,7 +258,7 @@ func (s *server) serve(w http.ResponseWriter, r *http.Request) {
 		if v.PendingIntent == nil || input.IntentID != v.PendingIntent.ID || v.PendingIntent.Status != "wallet-open" || v.PendingIntent.TransactionHash != "" || v.PendingIntent.OpenAttempts != 1 {
 			e = errors.New("only an explicit wallet rejection before broadcast can clear this intent")
 		} else {
-			v.PendingIntent = nil
+			archiveIntent(v, "wallet-rejected")
 			v.Message = "Wallet rejected the request before broadcast."
 			e = s.save(v)
 		}
@@ -264,7 +266,7 @@ func (s *server) serve(w http.ResponseWriter, r *http.Request) {
 		if v.PendingIntent == nil || input.IntentID != v.PendingIntent.ID || v.PendingIntent.Status != "prepared" || v.PendingIntent.TransactionHash != "" {
 			e = errors.New("only a wallet rejection before broadcasting can be cancelled")
 		} else {
-			v.PendingIntent = nil
+			archiveIntent(v, "cancelled-unopened")
 			v.Message = "Wallet request cancelled before broadcast."
 			e = s.save(v)
 		}

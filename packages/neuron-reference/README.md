@@ -8,7 +8,7 @@ The service delivers the actual bytes of one operator-selected, permitted file. 
 
 - Upstream repository: `https://github.com/NeuronInnovations/neuron-specs.git`.
 - Revision: `13ab01d70ac42531065094a52cd595ef7b6d3223`.
-- Build runtime: Go `1.26.8`; dependencies use the same patched Hiero, libp2p, gRPC, crypto and Pion versions as the existing Go gateway. The prepared `build-provenance.json` records the resolved module graph.
+- Build runtime: Go `1.27.1`; dependencies use the same patched Hiero, libp2p, gRPC, crypto and Pion versions as the existing Go gateway. The prepared `build-provenance.json` records the resolved module graph.
 - Payment uses the upstream `NeuronEscrow` **ERC20** ABI. Token values are integer token base units with independently checked decimals. They are never described as HBAR/tinybar. HBAR only pays network fees.
 - Protocol payloads use the original upstream `payment` serializers unchanged. `serviceParams` is the upstream-defined application map; it carries the customer wallet, chain, escrow, immutable document hash/size/name and refund deadline for this document service.
 - `agreementHash` is the upstream Keccak-256 of the canonical accepted `serviceResponse`. Its unique request ID refers to the signed service request containing exact terms.
@@ -24,7 +24,7 @@ This is an original orchestration adapter around upstream reference components. 
 
 Run `node packages/neuron-reference/scripts/prepare.mjs`. It fetches the exact revision into an external cache and compiles the original bridge overlay as `cmd/scaffold-reference`. The upstream internal Go packages require building in that module. No upstream source or binary is copied into this repository. The upstream checkout has no root license file at this revision; public redistribution of its source/binary requires separate license review. Our wrapper follows this repository's license without relicensing upstream code.
 
-The preparation command prints the absolute binary path. Set `NEURON_REFERENCE_CACHE` to change the owner-controlled build cache. Go 1.26.8 can be selected through the standard Go toolchain mechanism. A changed upstream source checkout is rejected.
+The preparation command prints the absolute binary path. Set `NEURON_REFERENCE_CACHE` to change the owner-controlled build cache. Go 1.27.1 can be selected through the standard Go toolchain mechanism. A changed upstream source checkout is rejected.
 
 Create an owner-only directory outside this repository (mode 0700). Copy `config.example.json` there as a mode-0600 file and provide:
 
@@ -47,7 +47,7 @@ Start the prepared binary without arguments. `--check` runs read-only account/to
 
 ## Restart the configured local service
 
-Use Node **22.23.3** from `.nvmrc` for installation, build and startup. `better-sqlite3` has a native binding for that Node runtime and operating system. If its binding is missing or has an ABI mismatch, select the intended Node version first, then run `npm run rebuild:native` in the repository root.
+Use Node **22.23.3** from `.nvmrc` for installation, build and startup. `better-sqlite3` 13 uses Node-API with a native binary for the operating system and architecture. If that binary is missing or incompatible with the host, select a supported Node version, then run `npm run rebuild:native` in the repository root.
 
 Keep a trusted, operator-maintained shell environment file outside the repository, mode 0600 in a 0700 directory. Include the bridge variables above with their existing paths, plus:
 
@@ -89,9 +89,9 @@ Routine shutdown and restart must retain the customer SQLite database and its WA
 
 The `/reference` page negotiates a document session, displays exact signed terms and requests these individual wallet decisions: create escrow, approve the exact token amount, then deposit. After funding, **Receive document** runs actual reference P2P delivery, independently hashes the received bytes, saves them, requests the seller's onchain release and publishes its signed invoice. The customer can download/review the document, then explicitly approve payment. **Settle** lets the seller withdraw only that approved amount to its own address. Alternatively the buyer can claim the exact remaining deposit after the deadline.
 
-Every browser wallet opening has a persisted intent, including the exact chain nonce, before the provider is invoked. A separate `open-wallet` transition is persisted before invoking the provider: a merely prepared intent can be resumed or cancelled after reloading. An opened request that returned no hash can be explicitly retried with its identical nonce, buyer, chain, target, calldata and value; the network can execute at most one such transaction. A consumed nonce requires transaction-history reconciliation, and another reference session cannot reserve the same nonce. At most three wallet openings are allowed. A provider rejection on a retry cannot erase the original uncertain attempt. Refused wallet openings return HTTP 409, preventing an old `wallet-open` state from being interpreted as a new authorization.
+Every browser wallet opening has a persisted intent, including the exact chain nonce, before the provider is invoked. A separate `open-wallet` transition is persisted before invoking the provider: a merely prepared intent can be resumed or cancelled after reloading. An opened request that returned no hash can be explicitly retried with its identical nonce, buyer, chain, target, calldata and value; the network can execute at most one such transaction. A consumed nonce requires transaction-history reconciliation, and another reference session cannot reserve the same nonce. Same-nonce retries have no arbitrary opening-count cutoff; each opening is durably timestamped. A provider rejection on a retry cannot erase the original uncertain attempt. Refused wallet openings return HTTP 409, preventing an old `wallet-open` state from being interpreted as a new authorization.
 
-Retain the returned transaction hash and use Refresh when indexing is delayed. The server checks the transaction's chain, signer, recipient, value, calldata, recorded nonce, receipt events and resulting escrow state. Up to eight hash candidates can be retained to correct a pasted hash without issuing a new transaction. Never cancel when a transaction may have been broadcast. No timeout alone proves non-submission. A historical intent created before nonce recording cannot be assigned a nonce retrospectively or retried; its wallet must reconcile that old transaction before preparing another reference purchase. Its original journal is preserved.
+Retain the returned transaction hash and use Refresh when indexing is delayed. The server checks the transaction's chain, signer, recipient, value, calldata, recorded nonce, receipt events and resulting escrow state. Hash candidates are retained to correct a pasted hash without issuing a new transaction. If your wallet explicitly replaces an uncertain transaction with a mined zero-value, empty-data self-transfer at the original recorded nonce, paste that cancellation hash into the same reconciliation field. The bridge checks the chain, signer, exact nonce, transaction hash and successful receipt before archiving the entire original intent and offering a fresh action. A pending, foreign, wrong-nonce or historical nonce-less cancellation cannot clear it. Never discard an intent merely because a transaction may have failed or disappeared. No timeout alone proves non-submission. A historical intent created before nonce recording cannot be assigned a nonce retrospectively or retried; its wallet must reconcile that old transaction before preparing another reference purchase. Its original journal is preserved.
 
 Every HCS transaction ID and exact signed envelope is fsynced before submission. A failed/uncertain result is read back from official Mirror, with chunk identity, payer, bytes and signature checked. It is never blindly resubmitted. If the process dies before an HCS transaction was actually sent, that recorded request remains unresolved; use the persisted ID to investigate rather than issuing a second payment. Funded sessions still have their direct contract timeout refund.
 
@@ -99,16 +99,24 @@ Seller EVM transactions are signed with an explicit legacy gas price and gas cap
 
 State is an fsynced, atomic owner-only per-session JSON journal with one process holding an exclusive file lock. Wallet ownership survives re-sign-in: the authenticated same wallet can rebind to its new app session. The purchased source bytes are snapshotted and must match the negotiated hash. At most three actual delivery attempts are allowed. Other wallets cannot inspect the record or download its delivered file.
 
-The underlying upstream escrow has draft limitations and is enabled only for this limited testnet path. The bridge forbids repeated deposits into the same escrow, never changes the release recipient, and never approves a buyer release automatically. It does not make the upstream contract production safe or pass the separate mainnet release gate.
+ERC20 allowance belongs to the wallet and escrow contract, so another purchase can consume it. Available actions re-read allowance; when it is insufficient, the buyer can approve the exact price again. The bridge checks allowance, token balance and prior buyer deposit events immediately before opening a deposit wallet request. If a prepared request becomes stale, cancel that unopened intent and refresh. An opened request retains its original nonce and must be reconciled; a revert clears the failed intent and permits a fresh exact approval. Approval receipt validation uses the exact event, so later consumption does not invalidate a successful approval.
+
+The pinned escrow accepts token deposits from other wallets, even after payout or refund. The bridge permits the buyer’s one negotiated deposit despite such surplus, proves buyer deposits using events scoped from the confirmed creation block, and pays the seller only the negotiated amount. `paid-with-remainder` keeps a positive residual balance visible and exposes its buyer refund after the deadline. Refund receipts record the actual amount, including surplus; later deposits after a refund remain recoverable as `refunded-with-remainder`. Remaining balance, last refund amount and seller payment are separate public fields.
+
+Journal version 2 stores both signed HCS envelope and payload as base64 byte fields, preserving them through JSON formatting and restarts. On startup, legacy unversioned journals are migrated only when undoing the old writer’s formatting restores the recorded SHA-256, valid signature, sender and matching embedded payload. The exact original is atomically saved as `<session-id>.json.v1.bak` before replacement; retain it with the journal. Unknown versions or changed signed content fail closed. Neither migration nor recovery changes transaction IDs, re-signs messages or blindly submits another HCS transaction.
+
+The underlying upstream escrow has draft limitations and is enabled only for this limited testnet path. The bridge refuses a second buyer deposit into the same escrow, never changes the release recipient, and never approves a buyer release automatically. It does not make the upstream contract production safe or pass the separate mainnet release gate.
 
 ## Verification
 
 Run the focused bridge checks from the prepared upstream module (`<cache>/source/impl/golang`):
 
 ```sh
-GOTOOLCHAIN=go1.26.8 go test ./cmd/scaffold-reference
-GOTOOLCHAIN=go1.26.8 go vet ./cmd/scaffold-reference
+GOTOOLCHAIN=go1.27.1 go test -race -count=1 ./cmd/scaffold-reference
+GOTOOLCHAIN=go1.27.1 go vet ./cmd/scaffold-reference
 ```
+
+The local regression suite runs the pinned original ERC20 and escrow bytecode in an in-process EVM: shared allowance consumption/reapproval, stale deposit opening, dust before/after funding, exact seller payout, surplus/full refund and deposits after refund. Its seeded delivery/HCS records isolate payment accounting; they do not prove live Hedera or P2P delivery. Separate tests preserve signed bytes across versioned/legacy journals and SIGKILL, reject corruption, and reconcile an unverified persisted message against a local HTTP Mirror fixture.
 
 A live acceptance run needs real configured resources and explicit wallet approval: one exact-file paid purchase and a separate funded timeout-refund session. Record source revision, HCS references, file SHA-256, escrow IDs, token units, receipt results and buyer/seller balance changes. Do not present mock upstream demo settlement as real escrow proof.
 
