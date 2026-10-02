@@ -92,3 +92,32 @@ test("plain-object wallet errors expose only bounded message and numeric code", 
   assert.ok(!text.includes("\n"));
   assert.ok(referenceWalletFailure({ code: 4001 }).includes("earlier submitted transaction"));
 });
+
+
+test("surplus recovery exposes exact seller payment and independently verified refund amounts", () => {
+  const paid = { ...session, state: "paid-with-remainder", paidAmountBaseUnits: "1000", remainingBalanceBaseUnits: "1" };
+  assert.equal(parseReferenceSession(paid, config, buyer).remainingBalanceBaseUnits, "1");
+  const refunded = { ...paid, state: "refunded-with-remainder", refundAmountBaseUnits: "1", remainingBalanceBaseUnits: "2" };
+  assert.equal(parseReferenceSession(refunded, config, buyer).refundAmountBaseUnits, "1");
+  for (const invalid of [{ ...paid, paidAmountBaseUnits: "1001" }, { ...paid, remainingBalanceBaseUnits: "0" },
+    { ...paid, remainingBalanceBaseUnits: undefined },
+    { ...refunded, refundAmountBaseUnits: "0" },
+    { ...refunded, remainingBalanceBaseUnits: "-1" }, { ...refunded, remainingBalanceBaseUnits: (1n << 256n).toString() }]) {
+    assert.throws(() => parseReferenceSession(invalid, config, buyer));
+  }
+  assert.doesNotThrow(() => parseReferenceSession({ ...session, state: "paid" }, config, buyer));
+  for (const state of ["paid-with-remainder", "refunded-with-remainder"]) {
+    const legacy = parseReferenceSession({ ...session, state, remainingBalanceBaseUnits: "1" }, config, buyer);
+    assert.equal(legacy.paidAmountBaseUnits, undefined);
+    assert.equal(legacy.refundAmountBaseUnits, undefined);
+  }
+  assert.doesNotThrow(() => parseReferenceSession({ ...session, state: "refunded", refundAmountBaseUnits: "1001", remainingBalanceBaseUnits: "0" }, config, buyer));
+});
+
+test("repeated approval and refund recovery retain bounded transaction history beyond 32 entries", () => {
+  const transactions = Array.from({ length: 40 }, (_, i) => ({ kind: "token-approve", status: "confirmed",
+    transactionHash: "0x" + i.toString(16).padStart(64, "0") }));
+  assert.equal(parseReferenceSession({ ...session, transactions }, config, buyer).transactions.length, 40);
+  assert.throws(() => parseReferenceSession({ ...session, transactions: Array(1025).fill(transactions[0]) }, config, buyer));
+  assert.throws(() => parseReferenceSession({ ...session, transactions: [...transactions, { ...transactions[0], transactionHash: "invalid" }] }, config, buyer));
+});

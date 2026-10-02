@@ -16,6 +16,7 @@ export type ReferenceMessage = { kind: string; topicId: string; sequenceNumber: 
 export type ReferenceSession = {
   id: string; buyerAddress: string; customerSessionId: string; state: string; message: string;
   createdAt: number; deadline: number; escrowId?: string; releaseId?: string; agreementHash: string;
+  remainingBalanceBaseUnits?: string; refundAmountBaseUnits?: string; paidAmountBaseUnits?: string;
   evidenceHash?: string; delivery?: { filename: string; bytes: number; sha256: string; downloadPath: string };
   messages: ReferenceMessage[]; transactions: { kind: string; transactionHash: string; status: string }[];
   walletActions: ReferenceWalletAction[];
@@ -151,7 +152,7 @@ export function parseReferenceSession(value: unknown, config: ReferenceConfig,
   const customerSessionId = text(row.customerSessionId, 32);
   if (!/^[a-f0-9]{32}$/.test(customerSessionId)) return fail();
   const state = text(row.state, 32);
-  if (!["negotiating", "agreed", "escrow-created", "token-approved", "funded", "delivered", "invoiced", "approved", "paid", "refunded", "uncertain", "failed"].includes(state)) return fail();
+  if (!["negotiating", "agreed", "escrow-created", "token-approved", "funded", "delivered", "invoiced", "approved", "paid", "paid-with-remainder", "refunded", "refunded-with-remainder", "uncertain", "failed"].includes(state)) return fail();
   const session: ReferenceSession = { id, buyerAddress, customerSessionId, state, message: text(row.message, 512),
     createdAt: integer(row.createdAt, 1), deadline: integer(row.deadline, 1),
     agreementHash: row.agreementHash === "" && ["negotiating", "uncertain", "failed"].includes(state) ? "" : hash(row.agreementHash),
@@ -162,10 +163,19 @@ export function parseReferenceSession(value: unknown, config: ReferenceConfig,
       return { kind: text(item.kind, 64), topicId, sequenceNumber, transactionId: text(item.transactionId, 100),
         sha256: hash(item.sha256, false), mirrorVerified: item.mirrorVerified, senderAddress: address(item.senderAddress),
         payload: object(item.payload) };
-    }), transactions: array(row.transactions ?? [], 32).map(value => {
+    }), transactions: array(row.transactions ?? [], 1024).map(value => {
       const item = object(value);
       return { kind: text(item.kind, 64), transactionHash: hash(item.transactionHash), status: text(item.status, 32) };
     }), walletActions: array(row.walletActions ?? [], 5).map(walletAction) };
+  for (const field of ["remainingBalanceBaseUnits", "refundAmountBaseUnits", "paidAmountBaseUnits"] as const) {
+    if (row[field] !== undefined) session[field] = uint(row[field]);
+  }
+  if (session.paidAmountBaseUnits !== undefined && session.paidAmountBaseUnits !== config.service.priceBaseUnits) return fail();
+  if (session.refundAmountBaseUnits !== undefined && BigInt(session.refundAmountBaseUnits) === 0n) return fail();
+  // Historical paid/refunded journals predate explicit amount fields. Preserve
+  // that absence; any supplied amount is still strictly validated above.
+  if (["paid-with-remainder", "refunded-with-remainder"].includes(state) &&
+      BigInt(session.remainingBalanceBaseUnits ?? "0") <= 0n) return fail();
   if (row.escrowId !== undefined && row.escrowId !== null && row.escrowId !== "") session.escrowId = uint(row.escrowId);
   if (row.releaseId !== undefined && row.releaseId !== null && row.releaseId !== "") session.releaseId = uint(row.releaseId);
   if (row.evidenceHash) session.evidenceHash = hash(row.evidenceHash);

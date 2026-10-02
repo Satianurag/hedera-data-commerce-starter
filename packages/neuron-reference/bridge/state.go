@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/sha256"
 	"encoding/hex"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/google/uuid"
@@ -74,6 +76,7 @@ type intent struct {
 	Transaction     walletAction `json:"transaction"`
 	CandidateHashes []string     `json:"candidateHashes,omitempty"`
 	OpenAttempts    int          `json:"openAttempts,omitempty"`
+	WalletOpenings  []string     `json:"walletOpenings,omitempty"`
 }
 type hcsMessage struct {
 	Kind           string          `json:"kind"`
@@ -99,23 +102,27 @@ type deliveredFile struct {
 	DownloadPath string `json:"downloadPath"`
 }
 type session struct {
-	ID                string         `json:"id"`
-	BuyerAddress      string         `json:"buyerAddress"`
-	CustomerSessionID string         `json:"customerSessionId"`
-	State             string         `json:"state"`
-	Message           string         `json:"message"`
-	CreatedAt         int64          `json:"createdAt"`
-	UpdatedAt         string         `json:"updatedAt"`
-	Deadline          uint64         `json:"deadline"`
-	EscrowID          string         `json:"escrowId,omitempty"`
-	ReleaseID         string         `json:"releaseId,omitempty"`
-	AgreementHash     string         `json:"agreementHash"`
-	EvidenceHash      string         `json:"evidenceHash,omitempty"`
-	Delivery          *deliveredFile `json:"delivery,omitempty"`
-	Messages          []hcsMessage   `json:"messages"`
-	Transactions      []transaction  `json:"transactions"`
-	WalletActions     []walletAction `json:"walletActions"`
-	PendingIntent     *intent        `json:"pendingIntent,omitempty"`
+	RemainingBalanceBaseUnits string         `json:"remainingBalanceBaseUnits,omitempty"`
+	RefundAmountBaseUnits     string         `json:"refundAmountBaseUnits,omitempty"`
+	PaidAmountBaseUnits       string         `json:"paidAmountBaseUnits,omitempty"`
+	ID                        string         `json:"id"`
+	BuyerAddress              string         `json:"buyerAddress"`
+	CustomerSessionID         string         `json:"customerSessionId"`
+	State                     string         `json:"state"`
+	Message                   string         `json:"message"`
+	CreatedAt                 int64          `json:"createdAt"`
+	UpdatedAt                 string         `json:"updatedAt"`
+	Deadline                  uint64         `json:"deadline"`
+	EscrowID                  string         `json:"escrowId,omitempty"`
+	ReleaseID                 string         `json:"releaseId,omitempty"`
+	AgreementHash             string         `json:"agreementHash"`
+	EvidenceHash              string         `json:"evidenceHash,omitempty"`
+	Delivery                  *deliveredFile `json:"delivery,omitempty"`
+	Messages                  []hcsMessage   `json:"messages"`
+	Transactions              []transaction  `json:"transactions"`
+	WalletActions             []walletAction `json:"walletActions"`
+	PendingIntent             *intent        `json:"pendingIntent,omitempty"`
+	IntentHistory             []intent       `json:"intentHistory,omitempty"`
 	// Seller raw transaction is saved BEFORE broadcast; recovery rebroadcasts no
 	// new transaction and uses the already assigned hash. Never returned by API.
 	SellerRawTx      string `json:"sellerRawTx,omitempty"`
@@ -124,6 +131,18 @@ type session struct {
 	ConfigHash       string `json:"configHash"`
 	DeliveryAttempts int    `json:"deliveryAttempts"`
 }
+type evmClient interface {
+	Close()
+	ChainID(context.Context) (*big.Int, error)
+	CodeAt(context.Context, common.Address, *big.Int) ([]byte, error)
+	PendingNonceAt(context.Context, common.Address) (uint64, error)
+	NonceAt(context.Context, common.Address, *big.Int) (uint64, error)
+	TransactionByHash(context.Context, common.Hash) (*types.Transaction, bool, error)
+	TransactionReceipt(context.Context, common.Hash) (*types.Receipt, error)
+	SuggestGasPrice(context.Context) (*big.Int, error)
+	SendTransaction(context.Context, *types.Transaction) error
+}
+
 type server struct {
 	mu            sync.Mutex
 	cfg           config
@@ -137,7 +156,7 @@ type server struct {
 	sellerECDSA   *ecdsa.PrivateKey
 	seller        common.Address
 	hcs           *hiero.Client
-	rpc           *ethclient.Client
+	rpc           evmClient
 	escrow        *bindings.NeuronEscrow
 	tokenContract *bindings.TestToken
 	sourceHash    string
@@ -191,6 +210,12 @@ func writeAtomic(path string, value any) error {
 	if e != nil {
 		return e
 	}
+	return writeAtomicBytes(path, b)
+}
+func writeAtomicBytes(path string, b []byte) error {
+	if len(b) > 1048576 {
+		return errors.New("private journal exceeds readable 1 MiB limit; preserve existing journal and investigate storage growth")
+	}
 	f, e := os.CreateTemp(filepath.Dir(path), ".write-")
 	if e != nil {
 		return e
@@ -222,7 +247,7 @@ func writeAtomic(path string, value any) error {
 }
 func (s *server) save(v *session) error {
 	v.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
-	return writeAtomic(filepath.Join(s.stateDir, v.ID+".json"), v)
+	return writeAtomic(filepath.Join(s.stateDir, v.ID+".json"), journalFor(v))
 }
 func (s *server) publicSession(v *session) any {
 	copy := *v
@@ -398,11 +423,17 @@ func newServer() (*server, error) {
 			return nil, e
 		}
 		var v session
-		if e = json.Unmarshal(b, &v); e != nil {
-			return nil, e
+		migrated, loadErr := decodeJournal(b, &v)
+		if loadErr != nil {
+			return nil, fmt.Errorf("invalid session journal %s: %w", filepath.Base(p), loadErr)
 		}
 		if !uuidPattern.MatchString(v.ID) || filepath.Base(p) != v.ID+".json" || v.ConfigHash != s.configHash {
 			return nil, errors.New("session journal configuration/source mismatch; restore original configuration to reconcile funded sessions")
+		}
+		if migrated {
+			if e = migrateJournal(p, b, &v); e != nil {
+				return nil, e
+			}
 		}
 		s.sessions[v.ID] = &v
 	}

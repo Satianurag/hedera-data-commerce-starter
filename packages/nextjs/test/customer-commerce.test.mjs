@@ -150,7 +150,10 @@ test("new funding stays closed without approval while buyer recovery routes rema
     assert.equal((await refundHistory.json()).refund.walletOpenCount, 1);
     const prematureRetry = await post(app.origin, "/api/customer-refund", cookie,
       { action: "retryWallet", refundId: "e".repeat(32) });
-    assert.equal(prematureRetry.status, 409);
+    assert.equal(prematureRetry.status, 400, "retry requires explicit acknowledgement");
+    const acknowledgedRetry = await post(app.origin, "/api/customer-refund", cookie,
+      { action: "retryWallet", refundId: "e".repeat(32), acknowledged: true });
+    assert.equal(acknowledgedRetry.status, 409);
     const other = await signIn(app.origin);
     const hidden = await fetch(app.origin + "/api/customer-funding", { headers: { Cookie: other.cookie } });
     assert.equal(hidden.status, 200);

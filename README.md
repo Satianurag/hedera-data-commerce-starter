@@ -36,12 +36,12 @@ When prompted, choose **Next.js App Router**, **Foundry**, **npm** as the packag
 If `forge` is not installed, this pinned command provides the official Foundry executable and runs the CLI non-interactively:
 
 ```sh
-npx --yes --package=@foundry-rs/forge@1.7.1 --package=create-scaffold-hbar@0.4.0 -c 'create-scaffold-hbar neuron-app --template Satianurag/neuron-customer-app-scaffold-hbar --frontend nextjs-app --solidity-framework foundry --network testnet --skip-install --skip-hedera-skills --yes --ci --package-manager=npm'
+npx --yes --package=@foundry-rs/forge@1.7.1 --package=create-scaffold-hbar@0.4.1 -c 'create-scaffold-hbar neuron-app --template Satianurag/neuron-customer-app-scaffold-hbar --frontend nextjs-app --solidity-framework foundry --network testnet --skip-install --skip-hedera-skills --yes --ci --package-manager=npm'
 ```
 
 Open **http://localhost:3000**. **Services** lists current testnet directory records and **Evidence** inspects any HCS topic. If an external service is unavailable, the page says so; it never shows generated placeholder records.
 
-The CLI network choice does not configure the app. Set `HEDERA_NETWORK` explicitly. CLI 0.4.0 also adds its default Foundry library submodules; this contract does not import them.
+The CLI network choice does not configure the app. Set `HEDERA_NETWORK` explicitly. CLI 0.4.1 also adds its default Foundry library submodules; this contract does not import them.
 
 ## Configure
 

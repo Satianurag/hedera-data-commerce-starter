@@ -13,7 +13,7 @@ const npm = process.env.npm_execpath;
 if (!npm) throw new Error("Run this with: npm run check:scaffold");
 const remote = process.argv.includes("--remote");
 const keep = process.argv.includes("--keep");
-const cliVersion = process.env.SCAFFOLD_HBAR_CLI_VERSION ?? "0.4.0";
+const cliVersion = process.env.SCAFFOLD_HBAR_CLI_VERSION ?? "0.4.1";
 const templateRepo = process.env.SCAFFOLD_HBAR_TEMPLATE ?? "Satianurag/neuron-customer-app-scaffold-hbar";
 const port = Number(process.env.SCAFFOLD_GATE_PORT ?? 3310);
 
