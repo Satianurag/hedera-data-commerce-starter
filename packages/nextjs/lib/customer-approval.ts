@@ -1,3 +1,5 @@
+import { currentCommerceSession, assertRefundReceiptHashes } from "./commerce-guards";
+import { walletAttemptTable, walletNonce, recordWalletAttempt, attachWalletAttempt } from "./customer-wallet-attempts";
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { lstatSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute } from "node:path";
@@ -38,9 +40,9 @@ function pinnedEscrow(session: CustomerSession, origin: URL, funding: FundingCon
 
 type ApprovalState = "prepared" | "wallet-opened" | "submitted" | "executed" | "failed" | "conflict";
 type WalletTransaction = Readonly<{ from: string; to: string; value: "0x0"; data: string;
-  gas: string; gasPrice: string; chainId: "0x128" }>;
+  gas: string; gasPrice: string; chainId: "0x128"; nonce?: string }>;
 export type ApprovalRecord = Readonly<{
-  id: string; fundingId: string; state: ApprovalState; escrowId: string;
+  walletAttemptId?: string | null; id: string; fundingId: string; state: ApprovalState; escrowId: string;
   transactionHash: string | null; reportedHash: string | null; observedHash: string | null;
   requestTopic: string; requestSequence: number; transportBytes: number;
   transportOpenedAt: string; transportClosedAt: string; preparedAt: number;
@@ -58,6 +60,7 @@ type FundingContext = {
   quote_duration_seconds: number;
 };
 type ApprovalRow = {
+  wallet_attempt_id: string | null;
   id: string; funding_id: string; session_id: string; owner_address: string; origin: string;
   state: ApprovalState; escrow_id: string; contract_id: string; contract_address: string;
   prepared_block: number; scan_next_block: number; prepared_at: number;
@@ -123,18 +126,20 @@ function withApprovalTable<T>(work: (db: Database.Database) => T): T {
     );
     CREATE INDEX IF NOT EXISTS customer_approval_owner_idx ON customer_approval_intents
       (owner_address, origin, prepared_at DESC);`);
+    walletAttemptTable(db);
+    const columns = db.pragma("table_info(customer_approval_intents)") as { name: string }[];
+    if (!columns.some(column => column.name === "wallet_attempt_id")) {
+      db.exec("ALTER TABLE customer_approval_intents ADD COLUMN wallet_attempt_id TEXT");
+    }
     return work(db);
   });
 }
 function currentBuyerSession(db: Database.Database, session: CustomerSession, origin: URL,
     now: number): boolean {
-  const row = db.prepare(`SELECT session_id FROM customer_sessions WHERE session_id = ?
-    AND owner_address = ? AND origin = ? AND revoked_at IS NULL AND expires_at > ?`)
-    .get(session.sessionId, session.ownerAddress, origin.origin, now) as { session_id: string } | undefined;
-  return Boolean(row);
+  return currentCommerceSession(db, session, origin, now);
 }
 function asRecord(row: ApprovalRow): ApprovalRecord {
-  return { id: row.id, fundingId: row.funding_id, state: row.state, escrowId: row.escrow_id,
+  return { walletAttemptId: row.wallet_attempt_id, id: row.id, fundingId: row.funding_id, state: row.state, escrowId: row.escrow_id,
     transactionHash: row.confirmed_hash ?? row.observed_hash ?? row.transaction_hash,
     reportedHash: row.transaction_hash, observedHash: row.observed_hash,
     requestTopic: row.request_topic, requestSequence: row.request_sequence,
@@ -308,7 +313,7 @@ async function confirmedRequest(session: CustomerSession, origin: URL, purchaseS
 }
 
 async function contractPreflight(funding: FundingContext, session: CustomerSession,
-    origin: URL): Promise<Readonly<{
+    origin: URL, blockTag = "latest"): Promise<Readonly<{
   transaction: WalletTransaction; blockNumber: number; fundedAtMs: number;
 }>> {
   if (!funding.escrow_id || !/^[1-9]\d*$/.test(funding.escrow_id) || !funding.confirmed_hash ||
@@ -324,9 +329,9 @@ async function contractPreflight(funding: FundingContext, session: CustomerSessi
   const abi = pinnedEscrow(session, origin, funding);
   const data = abi.encodeFunctionData("approve", [id]);
   const [chain, code, latest, stored, fundedReceipt, gasPriceRaw, balanceRaw] = await Promise.all([
-    rpc("eth_chainId", []), rpc("eth_getCode", [address, "latest"]),
-    rpc("eth_getBlockByNumber", ["latest", false]),
-    rpc("eth_call", [{ to: address, data: abi.encodeFunctionData("escrows", [id]) }, "latest"]),
+    rpc("eth_chainId", []), rpc("eth_getCode", [address, blockTag]),
+    rpc("eth_getBlockByNumber", [blockTag, false]),
+    rpc("eth_call", [{ to: address, data: abi.encodeFunctionData("escrows", [id]) }, blockTag]),
     rpc("eth_getTransactionReceipt", [funding.confirmed_hash]),
     rpc("eth_gasPrice", []), rpc("eth_getBalance", [session.ownerAddress, "latest"]),
   ]);
@@ -467,12 +472,17 @@ export async function prepareCustomerApproval(session: CustomerSession, origin: 
 }
 
 export async function markCustomerApprovalWalletOpened(session: CustomerSession, origin: URL,
-    id: string, acknowledged: boolean): Promise<Readonly<{
+    id: string, acknowledged: boolean, retry = false): Promise<Readonly<{
       approval: ApprovalRecord; transaction: WalletTransaction }>> {
   if (acknowledged !== true) throw new CommerceIssue("Explicit buyer transport acknowledgement is required", 400);
   if (!approvalEnabled()) throw new CommerceIssue("Buyer approval is disabled", 404);
+  if (retry) await reconcileCustomerApproval(session, origin, id);
   const row = approvalRow(session, origin, id);
-  if (row.state !== "prepared" || session.expiresAt <= Math.floor(Date.now() / 1000)) {
+  const now = Math.floor(Date.now() / 1000);
+  if ((!retry && row.state !== "prepared") ||
+      (retry && (!["wallet-opened", "submitted", "failed"].includes(row.state) ||
+        row.observed_hash || row.confirmed_hash || row.buyer_acknowledged_at === null ||
+        (row.state !== "failed" && row.buyer_acknowledged_at > now - 60))) || session.expiresAt <= now) {
     throw new CommerceIssue("Approval wallet attempt is unavailable or was already opened", 409);
   }
   const funding = fundingContext(session, origin, row.funding_id);
@@ -499,30 +509,41 @@ export async function markCustomerApprovalWalletOpened(session: CustomerSession,
       completed.closedAt !== row.transport_closed_at || completed.bytes !== row.transport_bytes) {
     throw new CommerceIssue("Original request or transport record changed before wallet approval", 409);
   }
+  const transaction = { ...fresh.transaction, nonce: await walletNonce(rpc, session.ownerAddress,
+    retry ? row.transaction_json : undefined, row.state === "failed", async blockTag => {
+      await contractPreflight(funding, session, origin, blockTag);
+    }) };
+  const original = row;
   return withApprovalTable(db => db.transaction(() => {
     const row = db.prepare(`SELECT * FROM customer_approval_intents WHERE id = ?
       AND owner_address = ? AND origin = ?`)
       .get(id, session.ownerAddress, origin.origin) as ApprovalRow | undefined;
-    if (!row || row.state !== "prepared" ||
+    if (!row || row.state !== original.state || row.wallet_attempt_id !== original.wallet_attempt_id ||
+        row.buyer_acknowledged_at !== original.buyer_acknowledged_at ||
+        row.transaction_hash !== original.transaction_hash || row.observed_hash || row.confirmed_hash ||
         !currentBuyerSession(db, session, origin, Math.floor(Date.now() / 1000))) {
       throw new CommerceIssue("Approval wallet attempt is unavailable or was already opened", 409);
     }
     const now = Math.floor(Date.now() / 1000);
+    if (now + 120 >= funding.refund_after) throw new CommerceIssue("Approval deadline expired during preflight", 409);
+    const attemptId = recordWalletAttempt(db, "approval", row, transaction, now, retry ? row.buyer_acknowledged_at : null);
     db.prepare(`UPDATE customer_approval_intents SET state = 'wallet-opened',
-      transaction_json = ?, buyer_acknowledged_at = ?, updated_at = ? WHERE id = ?`)
-      .run(JSON.stringify(fresh.transaction), now, now, id);
-    return { approval: asRecord({ ...row, state: "wallet-opened", buyer_acknowledged_at: now }),
-      transaction: fresh.transaction };
+      transaction_json = ?, buyer_acknowledged_at = ?, wallet_attempt_id = ?, transaction_hash = NULL, updated_at = ? WHERE id = ?`)
+      .run(JSON.stringify(transaction), now, attemptId, now, id);
+    return { approval: asRecord({ ...row, state: "wallet-opened", buyer_acknowledged_at: now, wallet_attempt_id: attemptId, transaction_hash: null }),
+      transaction };
   }).immediate());
 }
 
 export function attachCustomerApprovalHash(session: CustomerSession, origin: URL,
-    id: string, hash: string): ApprovalRecord {
+    id: string, hash: string, attemptId?: string): ApprovalRecord {
   if (!hashPattern.test(hash)) throw new CommerceIssue("Invalid approval transaction hash", 400);
   return withApprovalTable(db => db.transaction(() => {
     const row = db.prepare(`SELECT * FROM customer_approval_intents WHERE id = ?
       AND owner_address = ? AND origin = ?`).get(id, session.ownerAddress, origin.origin) as ApprovalRow | undefined;
-    if (!row || (row.state !== "wallet-opened" && row.state !== "submitted") ||
+    if (!row) throw new CommerceIssue("Approval intent is missing", 404);
+    if (!attachWalletAttempt(db, "approval", row, hash.toLowerCase(), attemptId)) return asRecord(row);
+    if ((row.state !== "wallet-opened" && row.state !== "submitted") ||
         (row.transaction_hash && row.transaction_hash !== hash.toLowerCase())) {
       throw new CommerceIssue("Approval hash does not match the durable wallet attempt", 409);
     }
@@ -610,7 +631,8 @@ export async function reconcileCustomerApproval(session: CustomerSession, origin
       quantity(tx.value, "approval value") !== 0n || String(tx.hash).toLowerCase() !== hash) {
     return withApprovalTable(db => {
       db.prepare(`UPDATE customer_approval_intents SET state = 'conflict', updated_at = ?
-        WHERE id = ? AND state != 'executed'`).run(Math.floor(Date.now() / 1000), id);
+        WHERE id = ? AND state != 'executed' AND wallet_attempt_id IS ? AND transaction_hash IS ?`)
+          .run(Math.floor(Date.now() / 1000), id, row.wallet_attempt_id, row.transaction_hash);
       return asRecord(approvalRow(session, origin, id));
     });
   }
@@ -622,12 +644,14 @@ export async function reconcileCustomerApproval(session: CustomerSession, origin
   if (!mirrorResponse.ok) throw new Error("Mirror approval receipt is unavailable");
   const mirror = await boundedJson(mirrorResponse) as Record<string, unknown>;
   if (!mirror || mirror.contract_id !== row.contract_id) throw new Error("Mirror approval contract ID differs");
+  assertRefundReceiptHashes(hash, receipt.transactionHash, mirror.hash);
   if (status !== 1n || mirror.result !== "SUCCESS") {
-    if (status === 0n && mirror.result !== "SUCCESS") {
+    if (status === 0n && typeof mirror.result === "string" && /^[A-Z][A-Z0-9_]+$/.test(mirror.result) &&
+        !["SUCCESS", "UNKNOWN", "PENDING"].includes(mirror.result)) {
       return withApprovalTable(db => {
         db.prepare(`UPDATE customer_approval_intents SET state = ?, updated_at = ?
-          WHERE id = ? AND state != 'executed'`)
-          .run(eventHash ? "conflict" : "failed", Math.floor(Date.now() / 1000), id);
+          WHERE id = ? AND state != 'executed' AND wallet_attempt_id IS ? AND transaction_hash IS ?`)
+          .run(eventHash ? "conflict" : "failed", Math.floor(Date.now() / 1000), id, row.wallet_attempt_id, row.transaction_hash);
         return asRecord(approvalRow(session, origin, id));
       });
     }
@@ -667,7 +691,7 @@ export async function reconcileCustomerApproval(session: CustomerSession, origin
       throw new Error("Approval journal changed while reconciling");
     }
     db.prepare(`UPDATE customer_approval_intents SET state = ?, confirmed_hash = ?, updated_at = ?
-      WHERE id = ?`).run(row.transaction_hash && row.transaction_hash !== hash ? "conflict" : "executed",
+      WHERE id = ?`).run("executed",
         hash, Math.floor(Date.now() / 1000), id);
     return asRecord(approvalRow(session, origin, id));
   }).immediate());

@@ -235,8 +235,13 @@ export default function ReferenceClient({ network }: { network: "testnet" | "mai
           <div><dt>Session ID</dt><dd className="mono">{session.id}</dd></div>
           <div><dt>Agreement hash</dt><dd className="mono">{session.agreementHash || "Agreement not yet confirmed"}</dd></div>
           {session.escrowId && <div><dt>Escrow ID</dt><dd>{session.escrowId}</dd></div>}
+          {session.paidAmountBaseUnits !== undefined && <div><dt>Verified seller payment</dt><dd>{formatUnits(session.paidAmountBaseUnits, config.service.tokenDecimals)} {config.service.tokenSymbol} · {session.paidAmountBaseUnits} base units</dd></div>}
+          {session.refundAmountBaseUnits !== undefined && <div><dt>Last verified refund</dt><dd>{formatUnits(session.refundAmountBaseUnits, config.service.tokenDecimals)} {config.service.tokenSymbol} · {session.refundAmountBaseUnits} base units</dd></div>}
+          {session.remainingBalanceBaseUnits !== undefined && <div><dt>Remaining escrow balance</dt><dd>{formatUnits(session.remainingBalanceBaseUnits, config.service.tokenDecimals)} {config.service.tokenSymbol} · {session.remainingBalanceBaseUnits} base units</dd></div>}
           <div><dt>Refund eligible from</dt><dd>{new Date(session.deadline * 1000).toLocaleString()} {expired ? "(deadline reached)" : ""}</dd></div>
         </dl>
+        {session.state === "paid-with-remainder" && <p className="notice">The seller received the exact agreed price. Additional tokens remain in escrow and can be refunded to your buyer wallet after the deadline.</p>}
+        {session.state === "refunded-with-remainder" && <p className="notice">A refund was verified, but additional tokens remain in escrow. Reconcile and claim the remaining balance after the deadline.</p>}
         <div className="actions">
           <button className="secondary" disabled={busy} onClick={() => void action("refresh")}>Reconcile this session</button>
           {session.state === "funded" && !expired && <button disabled={busy} onClick={() => void action("deliver")}>Receive seller&apos;s file</button>}
@@ -272,6 +277,7 @@ export default function ReferenceClient({ network }: { network: "testnet" | "mai
             <div className="actions"><button disabled={busy || consent !== `${session.id}:${session.pendingIntent.kind}` || now >= customer.expiresAt || (expired && session.pendingIntent.kind !== "refund")}
               onClick={() => void walletAction(session.pendingIntent!.kind)}>Retry identical transaction in wallet</button></div>
           </>}
+          <p>If your wallet canceled this operation with a confirmed zero-value transfer to your own address using the same nonce and no data, paste that cancellation hash below. The bridge verifies the mined cancellation and preserves the original operation before offering a fresh action. A pending cancellation or a different nonce cannot clear the intent.</p>
           <div className="topic-form"><label htmlFor="reference-transaction">Transaction hash</label><input id="reference-transaction" value={submittedHash}
             onChange={event => setSubmittedHash(event.target.value)} maxLength={66} placeholder="0x…" disabled={busy} />
           <button disabled={busy || !/^0x[a-fA-F0-9]{64}$/.test(submittedHash)} onClick={() => void attachHash()}>Reconcile transaction</button></div>

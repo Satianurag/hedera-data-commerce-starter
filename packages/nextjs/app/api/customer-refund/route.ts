@@ -62,13 +62,14 @@ export async function POST(request: Request): Promise<Response> {
         typeof body.refundId === "string") {
       return json(await openCustomerRefundWallet(auth.session!, auth.origin!, body.refundId));
     }
-    if (body.action === "retryWallet" && Object.keys(body).sort().join(",") === "action,refundId" &&
-        typeof body.refundId === "string") {
+    if (body.action === "retryWallet" && Object.keys(body).sort().join(",") === "acknowledged,action,refundId" &&
+        typeof body.refundId === "string" && body.acknowledged === true) {
       return json(await retryCustomerRefundWallet(auth.session!, auth.origin!, body.refundId));
     }
-    if (body.action === "attach" && Object.keys(body).sort().join(",") === "action,refundId,transactionHash" &&
-        typeof body.refundId === "string" && typeof body.transactionHash === "string") {
-      return json({ refund: attachCustomerRefundHash(auth.session!, auth.origin!, body.refundId, body.transactionHash) });
+    if (body.action === "attach" && ["action,refundId,transactionHash", "action,refundId,transactionHash,walletAttemptId"].includes(Object.keys(body).sort().join(",")) &&
+        typeof body.refundId === "string" && typeof body.transactionHash === "string" &&
+        (body.walletAttemptId === undefined || typeof body.walletAttemptId === "string")) {
+      return json({ refund: attachCustomerRefundHash(auth.session!, auth.origin!, body.refundId, body.transactionHash, body.walletAttemptId as string | undefined) });
     }
     if (body.action === "reconcile" && Object.keys(body).sort().join(",") === "action,refundId" &&
         typeof body.refundId === "string") {

@@ -1,10 +1,10 @@
 import type Database from "better-sqlite3";
-import type { CustomerSession } from "./customer-auth";
+import { customerAccessAllowed, type CustomerSession } from "./customer-auth";
 
 /** Recheck inside the transaction after awaited network preflight. */
 export function currentCommerceSession(db: Database.Database, session: CustomerSession,
     origin: URL, now: number): boolean {
-  if (session.expiresAt <= now) return false;
+  if (session.expiresAt <= now || !customerAccessAllowed(origin, session.ownerAddress)) return false;
   return Boolean(db.prepare(`SELECT session_id FROM customer_sessions WHERE session_id = ?
     AND owner_address = ? AND origin = ? AND revoked_at IS NULL AND expires_at > ?`)
     .get(session.sessionId, session.ownerAddress, origin.origin, now));

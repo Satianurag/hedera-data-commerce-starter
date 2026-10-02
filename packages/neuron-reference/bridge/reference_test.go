@@ -107,7 +107,7 @@ func TestRejectedRetryCannotClearEarlierUncertainSubmission(t *testing.T) {
 	if v.PendingIntent == nil || v.PendingIntent.OpenAttempts != 2 || v.PendingIntent.Transaction.Nonce != "0x2" {
 		t.Fatal("rejected retry discarded the original uncertain transaction")
 	}
-	v.PendingIntent.OpenAttempts = 3
+	v.PendingIntent.Transaction.Nonce = "0x00" // noncanonical persisted nonce must be refused
 	r = httptest.NewRequest("POST", "http://127.0.0.1:8098/v1/sessions/"+id+"/actions", strings.NewReader(`{"action":"open-wallet","intentId":"`+id+`"}`))
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Authorization", "Bearer private-test-token")

@@ -77,9 +77,10 @@ export async function POST(request: Request): Promise<Response> {
       }
       return json(await openCustomerFundingWallet(auth.session!, auth.origin!, body.fundingId));
     }
-    if (body.action === "attach" && Object.keys(body).sort().join(",") === "action,fundingId,transactionHash" &&
-        typeof body.fundingId === "string" && typeof body.transactionHash === "string") {
-      return json({ funding: attachCustomerFundingHash(auth.session!, auth.origin!, body.fundingId, body.transactionHash) });
+    if (body.action === "attach" && ["action,fundingId,transactionHash", "action,fundingId,transactionHash,walletAttemptId"].includes(Object.keys(body).sort().join(",")) &&
+        typeof body.fundingId === "string" && typeof body.transactionHash === "string" &&
+        (body.walletAttemptId === undefined || typeof body.walletAttemptId === "string")) {
+      return json({ funding: attachCustomerFundingHash(auth.session!, auth.origin!, body.fundingId, body.transactionHash, body.walletAttemptId as string | undefined) });
     }
     if (body.action === "reconcile" && Object.keys(body).sort().join(",") === "action,fundingId" &&
         typeof body.fundingId === "string") {

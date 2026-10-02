@@ -111,10 +111,15 @@ func (s *server) available(v *session) error {
 	switch v.State {
 	case "agreed":
 		kind = "create"
-	case "escrow-created":
-		kind = "token-approve"
-	case "token-approved":
+	case "escrow-created", "token-approved":
+		allowance, err := s.tokenContract.Allowance(&bind.CallOpts{Context: ctx}, hexAddress(v.BuyerAddress), hexAddress(s.cfg.EscrowAddress))
+		if err != nil {
+			return err
+		}
 		kind = "deposit"
+		if allowance.Cmp(integer(s.cfg.PriceBaseUnits)) < 0 {
+			kind = "token-approve"
+		}
 	case "invoiced":
 		kind = "approve-release"
 	}
@@ -130,7 +135,7 @@ func (s *server) available(v *session) error {
 		}
 		v.WalletActions = append(v.WalletActions, a)
 	}
-	if v.EscrowID != "" && v.State != "paid" && v.State != "refunded" && uint64(time.Now().Unix()) >= v.Deadline {
+	if v.EscrowID != "" {
 		if e := s.verifyEscrow(ctx, v); e != nil {
 			return e
 		}
@@ -138,7 +143,24 @@ func (s *server) available(v *session) error {
 		if e != nil {
 			return e
 		}
-		if es.Balance.Sign() > 0 {
+		v.RemainingBalanceBaseUnits = es.Balance.String()
+		if es.Balance.Sign() == 0 && v.State == "paid-with-remainder" {
+			v.State = "paid"
+			v.Message = "Seller received the negotiated amount; no tokens remain in escrow."
+		}
+		if es.Balance.Sign() == 0 && v.State == "refunded-with-remainder" {
+			v.State = "refunded"
+			v.Message = "The escrow refund is complete; no tokens remain."
+		}
+		if es.Balance.Sign() > 0 && v.State == "paid" {
+			v.State = "paid-with-remainder"
+			v.Message = "Seller received the negotiated amount. Remaining tokens can be refunded after the deadline."
+		}
+		if es.Balance.Sign() > 0 && v.State == "refunded" {
+			v.State = "refunded-with-remainder"
+			v.Message = "Additional tokens arrived after the refund. Claim the remaining balance after the deadline."
+		}
+		if es.Balance.Sign() > 0 && uint64(time.Now().Unix()) >= v.Deadline {
 			a, e := s.unsigned("refund", v)
 			if e != nil {
 				return e
@@ -170,24 +192,11 @@ func (s *server) prepare(v *session, kind string) error {
 		return e
 	}
 	if kind == "deposit" {
-		if e := s.verifyEscrow(ctx, v); e != nil {
+		if e := s.checkDeposit(ctx, v); e != nil {
 			return e
-		}
-		balance, e := s.tokenContract.BalanceOf(&bind.CallOpts{Context: ctx}, hexAddress(v.BuyerAddress))
-		if e != nil {
-			return e
-		}
-		if balance.Cmp(integer(s.cfg.PriceBaseUnits)) < 0 {
-			return errors.New("wallet has insufficient test ERC20 token balance")
-		}
-		es, e := s.escrow.GetEscrow(&bind.CallOpts{Context: ctx}, integer(v.EscrowID))
-		if e != nil {
-			return e
-		}
-		if es.Balance.Sign() != 0 || es.State != 0 {
-			return errors.New("escrow is already funded or closed; duplicate deposit refused")
 		}
 	}
+
 	// Persist the chain nonce before any wallet request. A later explicit retry
 	// may change gas pricing, but nonce and operation remain identical, so the
 	// network can execute at most one of those signed transactions.
@@ -215,6 +224,77 @@ func (s *server) prepare(v *session, kind string) error {
 	v.WalletActions = []walletAction{}
 	return s.save(v)
 }
+
+// Re-read shared allowance and escrow immediately before preparing/opening a
+// deposit. Other sessions and outside transactions can change both at any time.
+func (s *server) checkDeposit(ctx context.Context, v *session) error {
+	if err := s.verifyEscrow(ctx, v); err != nil {
+		return err
+	}
+	allowance, err := s.tokenContract.Allowance(&bind.CallOpts{Context: ctx}, hexAddress(v.BuyerAddress), hexAddress(s.cfg.EscrowAddress))
+	if err != nil {
+		return err
+	}
+	if allowance.Cmp(integer(s.cfg.PriceBaseUnits)) < 0 {
+		return errors.New("shared token allowance was consumed; cancel this unopened intent and approve the exact amount again, or reconcile an already opened intent")
+	}
+	balance, err := s.tokenContract.BalanceOf(&bind.CallOpts{Context: ctx}, hexAddress(v.BuyerAddress))
+	if err != nil {
+		return err
+	}
+	if balance.Cmp(integer(s.cfg.PriceBaseUnits)) < 0 {
+		return errors.New("wallet has insufficient test ERC20 token balance")
+	}
+	es, err := s.escrow.GetEscrow(&bind.CallOpts{Context: ctx}, integer(v.EscrowID))
+	if err != nil {
+		return err
+	}
+	if es.State != 0 && es.State != 1 {
+		return errors.New("escrow is closed; deposit refused")
+	}
+	if uint64(time.Now().Unix()+30) >= v.Deadline {
+		return errors.New("deposit window expired; claim any remaining tokens after the deadline")
+	}
+	// The pinned contract accepts deposits from anyone. A stranger's deposit
+	// must not prevent the buyer's one negotiated deposit; a prior buyer deposit
+	// must still prevent accidental duplicate funding, including direct calls.
+	var creationBlock *big.Int
+	for _, previous := range v.Transactions {
+		if previous.Kind != "create" || previous.Status != "confirmed" {
+			continue
+		}
+		receipt, lookupErr := s.rpc.TransactionReceipt(ctx, common.HexToHash(previous.TransactionHash))
+		if lookupErr != nil {
+			return lookupErr
+		}
+		if receipt.Status != 1 || receipt.BlockNumber == nil {
+			return errors.New("escrow creation receipt is not confirmed")
+		}
+		for _, log := range receipt.Logs {
+			if log.Address != hexAddress(s.cfg.EscrowAddress) {
+				continue
+			}
+			created, parseErr := s.escrow.ParseEscrowCreated(*log)
+			if parseErr == nil && created.EscrowId.String() == v.EscrowID && created.Buyer == hexAddress(v.BuyerAddress) {
+				creationBlock = receipt.BlockNumber
+			}
+		}
+	}
+	if creationBlock == nil || !creationBlock.IsUint64() {
+		return errors.New("escrow creation receipt required before a deposit")
+	}
+	// Hashio rejects log queries spanning more than seven days. Our immutable
+	// agreement window is at most one day; scope to this escrow's creation.
+	deposits, err := s.escrow.FilterDeposited(&bind.FilterOpts{Context: ctx, Start: creationBlock.Uint64()}, []*big.Int{integer(v.EscrowID)}, []common.Address{hexAddress(v.BuyerAddress)})
+	if err != nil {
+		return err
+	}
+	defer deposits.Close()
+	if deposits.Next() {
+		return errors.New("buyer already deposited into this escrow; reconcile that transaction instead of depositing again")
+	}
+	return deposits.Error()
+}
 func (s *server) confirmWallet(v *session, hash string) error {
 	in := v.PendingIntent
 	if in == nil {
@@ -233,9 +313,6 @@ func (s *server) confirmWallet(v *session, hash string) error {
 		}
 	}
 	if !known {
-		if len(in.CandidateHashes) >= 8 {
-			return errors.New("transaction hash correction limit reached; operator reconciliation required")
-		}
 		in.CandidateHashes = append(in.CandidateHashes, hash)
 	}
 	in.TransactionHash = hash
@@ -252,6 +329,32 @@ func (s *server) confirmWallet(v *session, hash string) error {
 	sender, e := types.Sender(types.LatestSignerForChainID(big.NewInt(296)), tx)
 	if e != nil {
 		return e
+	}
+	if tx.Hash() != common.HexToHash(hash) {
+		return errors.New("RPC transaction hash mismatch")
+	}
+	// A mined self-transfer with the recorded nonce conclusively replaced this
+	// operation. Accept only this explicit zero-value cancellation shape; an
+	// arbitrary different transaction is not authority to erase an intent.
+	if in.Transaction.Nonce != "" && tx.ChainId().Cmp(big.NewInt(296)) == 0 && sender == hexAddress(v.BuyerAddress) && tx.To() != nil && *tx.To() == sender && tx.Value().Sign() == 0 && len(tx.Data()) == 0 {
+		nonce, nonceErr := exactNonce(in.Transaction.Nonce)
+		if nonceErr != nil {
+			return nonceErr
+		}
+		if tx.Nonce() != nonce {
+			return errors.New("cancellation nonce does not match the recorded wallet intent")
+		}
+		receipt, receiptErr := s.rpc.TransactionReceipt(ctx, tx.Hash())
+		if receiptErr != nil {
+			return errors.New("receipt not indexed yet; retain saved hash and refresh")
+		}
+		if receipt.TxHash != tx.Hash() || receipt.BlockNumber == nil || receipt.Status != 1 {
+			return errors.New("cancellation transaction is not successfully mined")
+		}
+		v.Transactions = append(v.Transactions, transaction{Kind: "cancel-" + in.Kind, TransactionHash: hash, Status: "confirmed"})
+		archiveIntent(v, "cancelled-onchain")
+		v.Message = "Wallet cancellation verified at the original nonce. The old operation cannot execute; refresh to choose an available action."
+		return s.save(v)
 	}
 	data, e := hex.DecodeString(strings.TrimPrefix(in.Transaction.Data, "0x"))
 	if e != nil {
@@ -279,9 +382,12 @@ func (s *server) confirmWallet(v *session, hash string) error {
 	if e != nil {
 		return errors.New("receipt not indexed yet; retain saved hash and refresh")
 	}
+	if receipt.TxHash != tx.Hash() || receipt.BlockNumber == nil {
+		return errors.New("RPC receipt hash or block mismatch")
+	}
 	if receipt.Status != 1 {
 		v.Transactions = append(v.Transactions, transaction{Kind: in.Kind, TransactionHash: hash, Status: "failed"})
-		v.PendingIntent = nil
+		archiveIntent(v, "failed")
 		v.Message = "Transaction reverted without advancing the purchase."
 		return s.save(v)
 	}
@@ -313,12 +419,21 @@ func (s *server) confirmWallet(v *session, hash string) error {
 		}
 		v.State = "escrow-created"
 	case "token-approve":
-		allowance, err := s.tokenContract.Allowance(&bind.CallOpts{Context: ctx}, hexAddress(v.BuyerAddress), hexAddress(s.cfg.EscrowAddress))
-		if err != nil {
-			return err
+		// Allowance is shared across purchases and may already be consumed by
+		// a later transaction. The exact approval event proves this intent;
+		// available() separately checks what can be spent right now.
+		matched := false
+		for _, log := range receipt.Logs {
+			if log.Address != hexAddress(s.cfg.TokenAddress) {
+				continue
+			}
+			approval, err := s.tokenContract.ParseApproval(*log)
+			if err == nil && approval.Owner == hexAddress(v.BuyerAddress) && approval.Spender == hexAddress(s.cfg.EscrowAddress) && approval.Value.Cmp(integer(s.cfg.PriceBaseUnits)) == 0 {
+				matched = true
+			}
 		}
-		if allowance.Cmp(integer(s.cfg.PriceBaseUnits)) != 0 {
-			return errors.New("token allowance differs from exact authorized amount")
+		if !matched {
+			return errors.New("exact token approval event missing")
 		}
 		v.State = "token-approved"
 	case "deposit":
@@ -331,7 +446,7 @@ func (s *server) confirmWallet(v *session, hash string) error {
 				continue
 			}
 			dep, err := s.escrow.ParseDeposited(*log)
-			if err == nil && dep.EscrowId.String() == v.EscrowID && dep.Depositor == hexAddress(v.BuyerAddress) && dep.Amount.Cmp(integer(s.cfg.PriceBaseUnits)) == 0 && dep.NewBalance.Cmp(integer(s.cfg.PriceBaseUnits)) == 0 {
+			if err == nil && dep.EscrowId.String() == v.EscrowID && dep.Depositor == hexAddress(v.BuyerAddress) && dep.Amount.Cmp(integer(s.cfg.PriceBaseUnits)) == 0 && dep.NewBalance.Cmp(integer(s.cfg.PriceBaseUnits)) >= 0 {
 				matched = true
 			}
 		}
@@ -356,7 +471,7 @@ func (s *server) confirmWallet(v *session, hash string) error {
 		if err != nil {
 			return err
 		}
-		if es.State != 3 || es.Balance.Sign() != 0 {
+		if es.State != 3 {
 			return errors.New("refund state not confirmed")
 		}
 		matched := false
@@ -365,17 +480,22 @@ func (s *server) confirmWallet(v *session, hash string) error {
 				continue
 			}
 			refund, err := s.escrow.ParseRefundClaimed(*log)
-			if err == nil && refund.EscrowId.String() == v.EscrowID && refund.Buyer == hexAddress(v.BuyerAddress) && refund.Amount.Cmp(integer(s.cfg.PriceBaseUnits)) == 0 {
+			if err == nil && refund.EscrowId.String() == v.EscrowID && refund.Buyer == hexAddress(v.BuyerAddress) && refund.Amount.Sign() > 0 {
+				v.RefundAmountBaseUnits = refund.Amount.String()
 				matched = true
 			}
 		}
 		if !matched {
-			return errors.New("exact refund event missing")
+			return errors.New("matching buyer refund event missing")
 		}
 		v.State = "refunded"
+		v.RemainingBalanceBaseUnits = es.Balance.String()
+		if es.Balance.Sign() > 0 {
+			v.State = "refunded-with-remainder"
+		}
 	}
 	v.Transactions = append(v.Transactions, transaction{Kind: kind, TransactionHash: hash, Status: "confirmed"})
-	v.PendingIntent = nil
+	archiveIntent(v, "confirmed")
 	v.Message = "Wallet transaction verified against the exact negotiated operation."
 	if e = s.save(v); e != nil {
 		return e
@@ -399,9 +519,6 @@ func (s *server) openWallet(v *session, intentID string) error {
 	if in.Status != "prepared" && (in.Status != "wallet-open" || in.TransactionHash != "") {
 		return errors.New("only a prepared intent or an identical nonce-bound retry can open a wallet")
 	}
-	if in.OpenAttempts >= 3 {
-		return errors.New("wallet retry limit reached; reconcile the recorded nonce and transaction history")
-	}
 	nonce, e := exactNonce(in.Transaction.Nonce)
 	if e != nil {
 		return e
@@ -422,8 +539,14 @@ func (s *server) openWallet(v *session, intentID string) error {
 	if latest > nonce {
 		return errors.New("recorded wallet nonce is already used; recover the transaction hash from wallet history")
 	}
+	if in.Kind == "deposit" {
+		if e := s.checkDeposit(ctx, v); e != nil {
+			return e
+		}
+	}
 	in.Status = "wallet-open"
 	in.OpenAttempts++
+	in.WalletOpenings = append(in.WalletOpenings, time.Now().UTC().Format(time.RFC3339Nano))
 	return s.save(v)
 }
 func (s *server) escrowRef(v *session) string {
@@ -563,4 +686,16 @@ func (s *server) sellerTransaction(v *session, kind string) (*types.Receipt, err
 func (s *server) rpcNonce(ctx context.Context) (*big.Int, error) {
 	n, e := s.rpc.PendingNonceAt(ctx, s.seller)
 	return new(big.Int).SetUint64(n), e
+}
+
+func archiveIntent(v *session, status string) {
+	if v.PendingIntent == nil {
+		return
+	}
+	archived := *v.PendingIntent
+	archived.Status = status
+	archived.CandidateHashes = append([]string(nil), archived.CandidateHashes...)
+	archived.WalletOpenings = append([]string(nil), archived.WalletOpenings...)
+	v.IntentHistory = append(v.IntentHistory, archived)
+	v.PendingIntent = nil
 }

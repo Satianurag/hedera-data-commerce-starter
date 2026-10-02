@@ -1,3 +1,4 @@
+import { walletAttemptTable, walletNonce, recordWalletAttempt, attachWalletAttempt } from "./customer-wallet-attempts";
 import { currentCommerceSession, assertRefundReceiptHashes } from "./commerce-guards";
 import { createHash, randomBytes } from "node:crypto";
 import type Database from "better-sqlite3";
@@ -38,10 +39,10 @@ function pinnedInterface(abiJson: string | null): Interface {
 type FundingState = "prepared" | "submitted" | "executed" | "failed" | "conflict" | "abandoned";
 type ContractState = "funded" | "approved" | "paid" | "refunded" | null;
 type WalletTransaction = Readonly<{
-  from: string; to: string; value: string; data: string; gas: string; gasPrice: string; chainId: "0x128";
+  from: string; to: string; value: string; data: string; gas: string; gasPrice: string; chainId: "0x128"; nonce?: string;
 }>;
 export type FundingRecord = Readonly<{
-  id: string; quoteIntentId: string; state: FundingState; contractState: ContractState;
+  walletAttemptId?: string | null; id: string; quoteIntentId: string; state: FundingState; contractState: ContractState;
   walletOpenedAt: number | null; runtimeSha256: string | null; abiPinned: boolean;
   abandonedAt: number | null;
   transactionHash: string | null; reportedHash: string | null; observedHash: string | null;
@@ -54,13 +55,14 @@ export type FundingRecord = Readonly<{
   settlementVerifiedAt: number | null;
 }>;
 export type RefundRecord = Readonly<{
-  id: string; fundingId: string; state: FundingState; escrowId: string;
+  walletAttemptId?: string | null; id: string; fundingId: string; state: FundingState; escrowId: string;
   walletOpenedAt: number | null; walletOpenCount: number;
   transactionHash: string | null; reportedHash: string | null; observedHash: string | null;
   amountTinybar: string; preparedAt: number;
 }>;
 
 type FundingRow = {
+  wallet_attempt_id: string | null;
   id: string; quote_intent_id: string; state: FundingState; contract_state: ContractState;
   transaction_hash: string | null; observed_hash: string | null; confirmed_hash: string | null;
   escrow_id: string | null; terms_hash: string;
@@ -76,6 +78,7 @@ type FundingRow = {
   owner_address: string; origin: string;
 };
 type RefundRow = {
+  wallet_attempt_id: string | null;
   id: string; funding_id: string; state: FundingState; escrow_id: string;
   session_id: string; owner_address: string; origin: string;
   contract_id: string; contract_address: string; amount_tinybar: string;
@@ -109,6 +112,10 @@ function withFundingTable<T>(work: (db: Database.Database) => T): T {
     CREATE INDEX IF NOT EXISTS customer_funding_history_idx
       ON customer_funding_intents(owner_address, origin, prepared_at DESC, id DESC);`);
     const columns = db.pragma("table_info(customer_funding_intents)") as { name: string }[];
+    walletAttemptTable(db);
+    if (!columns.some(column => column.name === "wallet_attempt_id")) {
+      db.exec("ALTER TABLE customer_funding_intents ADD COLUMN wallet_attempt_id TEXT");
+    }
     if (!columns.some(column => column.name === "wallet_opened_at")) {
       db.exec("ALTER TABLE customer_funding_intents ADD COLUMN wallet_opened_at INTEGER");
     }
@@ -166,6 +173,10 @@ function withRefundTable<T>(work: (db: Database.Database) => T): T {
     CREATE INDEX IF NOT EXISTS customer_refund_owner_idx
       ON customer_refund_intents(owner_address, origin, prepared_at DESC);`);
     const columns = db.pragma("table_info(customer_refund_intents)") as { name: string }[];
+    walletAttemptTable(db);
+    if (!columns.some(column => column.name === "wallet_attempt_id")) {
+      db.exec("ALTER TABLE customer_refund_intents ADD COLUMN wallet_attempt_id TEXT");
+    }
     if (!columns.some(column => column.name === "wallet_opened_at")) {
       db.exec("ALTER TABLE customer_refund_intents ADD COLUMN wallet_opened_at INTEGER");
     }
@@ -180,7 +191,7 @@ function withRefundTable<T>(work: (db: Database.Database) => T): T {
 }
 
 function asRecord(row: FundingRow): FundingRecord {
-  return { id: row.id, quoteIntentId: row.quote_intent_id,
+  return { walletAttemptId: row.wallet_attempt_id, id: row.id, quoteIntentId: row.quote_intent_id,
     state: row.abandoned_at === null ? row.state : "abandoned",
     contractState: row.contract_state, walletOpenedAt: row.wallet_opened_at,
     runtimeSha256: row.runtime_sha256, abiPinned: row.abi_json !== null,
@@ -200,7 +211,7 @@ function asRecord(row: FundingRow): FundingRecord {
 }
 
 function asRefund(row: RefundRow): RefundRecord {
-  return { id: row.id, fundingId: row.funding_id, state: row.state, escrowId: row.escrow_id,
+  return { walletAttemptId: row.wallet_attempt_id, id: row.id, fundingId: row.funding_id, state: row.state, escrowId: row.escrow_id,
     walletOpenedAt: row.wallet_opened_at, walletOpenCount: row.wallet_open_count,
     transactionHash: row.confirmed_hash ?? row.observed_hash ?? row.transaction_hash,
     reportedHash: row.transaction_hash, observedHash: row.observed_hash,
@@ -418,6 +429,7 @@ export async function openCustomerFundingWallet(session: CustomerSession, origin
       fresh.runtimeSha256 !== row.runtime_sha256) {
     throw new CommerceIssue("The reviewed escrow runtime changed before wallet funding", 409);
   }
+  const transaction = { ...fresh.transaction, nonce: await walletNonce(rpc, session.ownerAddress) };
   return withFundingTable(db => db.transaction(() => {
     const now = Math.floor(Date.now() / 1000);
     const current = db.prepare(`SELECT * FROM customer_funding_intents
@@ -429,15 +441,16 @@ export async function openCustomerFundingWallet(session: CustomerSession, origin
         !currentCommerceSession(db, session, origin, now) || row.quote_expires_at <= now + 60) {
       throw new CommerceIssue("Funding wallet opening expired or was already attempted", 409);
     }
+    const attemptId = recordWalletAttempt(db, "funding", current, transaction, now, null);
     db.prepare(`UPDATE customer_funding_intents
-      SET wallet_opened_at = ?, transaction_json = ?, updated_at = ? WHERE id = ?`)
-      .run(now, JSON.stringify(fresh.transaction), now, id);
-    return { funding: asRecord({ ...current, wallet_opened_at: now }), transaction: fresh.transaction };
+      SET wallet_opened_at = ?, transaction_json = ?, wallet_attempt_id = ?, updated_at = ? WHERE id = ?`)
+      .run(now, JSON.stringify(transaction), attemptId, now, id);
+    return { funding: asRecord({ ...current, wallet_opened_at: now, wallet_attempt_id: attemptId }), transaction };
   }).immediate());
 }
 
 export function attachCustomerFundingHash(session: CustomerSession, origin: URL,
-    id: string, transactionHash: string): FundingRecord {
+    id: string, transactionHash: string, attemptId?: string): FundingRecord {
   if (!idPattern.test(id) || !hashPattern.test(transactionHash)) {
     throw new CommerceIssue("Invalid funding transaction reference", 400);
   }
@@ -450,6 +463,7 @@ export function attachCustomerFundingHash(session: CustomerSession, origin: URL,
         (row.state !== "prepared" && row.state !== "submitted")) {
       throw new CommerceIssue("Funding attempt does not accept this transaction hash", 409);
     }
+    attachWalletAttempt(db, "funding", row, transactionHash.toLowerCase(), attemptId);
     db.prepare(`UPDATE customer_funding_intents SET transaction_hash = ?, state = 'submitted', updated_at = ?
       WHERE id = ? AND state IN ('prepared', 'submitted')`)
       .run(transactionHash.toLowerCase(), Math.floor(Date.now() / 1000), id);
@@ -537,10 +551,10 @@ async function scanFunded(row: FundingRow, mode: "reconcile" | "abandon", tipOve
   return { hash: null, complete: false };
 }
 
-async function escrowState(row: FundingRow, id: bigint): Promise<ContractState> {
+async function escrowState(row: FundingRow, id: bigint, blockTag = "latest"): Promise<ContractState> {
   const abi = pinnedInterface(row.abi_json);
   const result = hex(await rpc("eth_call", [{ to: row.contract_address,
-    data: abi.encodeFunctionData("escrows", [id]) }, "latest"]), "escrow state");
+    data: abi.encodeFunctionData("escrows", [id]) }, blockTag]), "escrow state");
   const item = abi.decodeFunctionResult("escrows", result);
   if (getAddress(item.buyer) !== row.owner_address || getAddress(item.seller) !== row.seller_address ||
       BigInt(item.amount) !== BigInt(row.amount_tinybar) ||
@@ -807,8 +821,10 @@ export async function reconcileCustomerFunding(session: CustomerSession, origin:
   if (!mirror || mirror.contract_id !== row.contract_id) {
     throw new Error("Mirror contract ID does not match the funding intent");
   }
+  assertRefundReceiptHashes(hash, receipt.transactionHash, mirror.hash);
   if (status !== 1n || mirror.result !== "SUCCESS") {
-    if (status === 0n && mirror.result !== "SUCCESS") {
+    if (status === 0n && typeof mirror.result === "string" && /^[A-Z][A-Z0-9_]+$/.test(mirror.result) &&
+        !["SUCCESS", "UNKNOWN", "PENDING"].includes(mirror.result)) {
       return mark(eventHash ? "conflict" : "failed");
     }
     throw new Error("RPC and Mirror disagree about escrow funding");
@@ -858,11 +874,16 @@ export async function reconcileCustomerFunding(session: CustomerSession, origin:
 export async function resolveExpiredCustomerFunding(session: CustomerSession, origin: URL,
     id: string): Promise<Readonly<{ funding: FundingRecord; scanComplete: boolean }>> {
   if (!idPattern.test(id)) throw new CommerceIssue("Invalid funding attempt reference", 400);
-  const row = fundingRow(session, origin, id);
+  let row = fundingRow(session, origin, id);
+  if (row.state === "failed") {
+    const checked = await reconcileCustomerFunding(session, origin, id);
+    if (checked.state !== "failed") throw new CommerceIssue("Reconcile the original funding before expiry recovery", 409);
+    row = fundingRow(session, origin, id);
+  }
   if (row.abandoned_at !== null) return { funding: asRecord(row), scanComplete: true };
-  if (row.state !== "prepared" || row.transaction_hash || row.observed_hash || row.confirmed_hash ||
-      !row.runtime_sha256 || !/^[0-9a-f]{64}$/.test(row.runtime_sha256)) {
-    throw new CommerceIssue("Only a still-unconfirmed prepared quote can be resolved as expired", 409);
+  if (!((row.state === "prepared" && !row.transaction_hash) || (row.state === "failed" && row.transaction_hash)) ||
+      row.observed_hash || row.confirmed_hash || !row.runtime_sha256 || !/^[0-9a-f]{64}$/.test(row.runtime_sha256)) {
+    throw new CommerceIssue("Only an unhashed prepared quote or definitively failed funding can be resolved as expired", 409);
   }
   const abi = pinnedInterface(row.abi_json);
   await assertEvmRpcNetwork(networkConfigFromEnv(process.env));
@@ -897,8 +918,9 @@ export async function resolveExpiredCustomerFunding(session: CustomerSession, or
   const funding = withFundingTable(db => db.transaction(() => {
     const current = db.prepare(`SELECT * FROM customer_funding_intents
       WHERE id = ? AND owner_address = ? AND origin = ?`).get(id, session.ownerAddress, origin.origin) as FundingRow | undefined;
-    if (!current || current.state !== "prepared" || current.abandoned_at !== null ||
-        current.transaction_hash || current.observed_hash || current.confirmed_hash ||
+    if (!current || current.state !== row.state || current.abandoned_at !== null ||
+        current.transaction_hash !== row.transaction_hash || current.observed_hash || current.confirmed_hash ||
+        !currentCommerceSession(db, session, origin, Math.floor(Date.now() / 1000)) ||
         current.runtime_sha256 !== row.runtime_sha256 || current.abi_json !== row.abi_json) {
       throw new CommerceIssue("Funding journal changed while resolving the expired quote", 409);
     }
@@ -1032,6 +1054,7 @@ export async function openCustomerRefundWallet(session: CustomerSession, origin:
       fresh.funding.amount_tinybar !== row.amount_tinybar || fresh.funding.abi_json !== row.abi_json) {
     throw new CommerceIssue("Funded escrow changed before refund wallet opening", 409);
   }
+  const transaction = { ...fresh.transaction, nonce: await walletNonce(rpc, session.ownerAddress) };
   return withRefundTable(db => db.transaction(() => {
     const now = Math.floor(Date.now() / 1000);
     const current = db.prepare(`SELECT * FROM customer_refund_intents
@@ -1042,28 +1065,29 @@ export async function openCustomerRefundWallet(session: CustomerSession, origin:
         !currentCommerceSession(db, session, origin, now)) {
       throw new CommerceIssue("Refund wallet opening expired or was already attempted", 409);
     }
+    const attemptId = recordWalletAttempt(db, "refund", current, transaction, now, null);
     db.prepare(`UPDATE customer_refund_intents
-      SET wallet_opened_at = ?, wallet_open_count = 1, transaction_json = ?, updated_at = ? WHERE id = ?`)
-      .run(now, JSON.stringify(fresh.transaction), now, id);
-    return { refund: asRefund({ ...current, wallet_opened_at: now, wallet_open_count: 1 }),
-      transaction: fresh.transaction };
+      SET wallet_opened_at = ?, wallet_open_count = 1, transaction_json = ?, wallet_attempt_id = ?, updated_at = ? WHERE id = ?`)
+      .run(now, JSON.stringify(transaction), attemptId, now, id);
+    return { refund: asRefund({ ...current, wallet_opened_at: now, wallet_open_count: 1, wallet_attempt_id: attemptId }),
+      transaction };
   }).immediate());
 }
 
 export async function retryCustomerRefundWallet(session: CustomerSession, origin: URL,
-    id: string): Promise<Readonly<{ refund: RefundRecord; transaction: WalletTransaction;
-      warning: string }>> {
+    id: string): Promise<Readonly<{ refund: RefundRecord; transaction: WalletTransaction; warning: string }>> {
   if (!idPattern.test(id)) throw new CommerceIssue("Invalid refund attempt reference", 400);
+  const initial = refundRow(session, origin, id);
+  if (initial.wallet_opened_at === null || !["prepared", "submitted", "failed"].includes(initial.state) ||
+      (initial.state !== "failed" && initial.wallet_opened_at > Math.floor(Date.now() / 1000) - 60)) {
+    throw new CommerceIssue("Reconcile the refund and wait one minute after an uncertain wallet opening before retrying", 409);
+  }
+  await reconcileCustomerRefund(session, origin, id);
   const row = refundRow(session, origin, id);
   const now = Math.floor(Date.now() / 1000);
-  if (row.state !== "prepared" || row.wallet_open_count !== 1 ||
-      row.wallet_opened_at === null || row.wallet_opened_at > now - 900 ||
-      row.transaction_hash || row.observed_hash || row.confirmed_hash) {
-    throw new CommerceIssue("Refund retry requires a 15-minute wait and an unresolved first wallet opening", 409);
-  }
-  const checked = await reconcileCustomerRefund(session, origin, id);
-  if (checked.state !== "prepared" || checked.reportedHash || checked.observedHash || checked.transactionHash) {
-    throw new CommerceIssue("Refund event or transaction hash requires reconciliation, not a retry", 409);
+  if (!["prepared", "submitted", "failed"].includes(row.state) || row.observed_hash || row.confirmed_hash ||
+      row.wallet_opened_at === null || (row.state !== "failed" && row.wallet_opened_at > now - 60)) {
+    throw new CommerceIssue("Reconcile the refund and wait one minute after an uncertain wallet opening before retrying", 409);
   }
   const fresh = await refundPreflight(session, origin, row.funding_id);
   if (fresh.escrowId !== row.escrow_id || fresh.funding.contract_id !== row.contract_id ||
@@ -1071,27 +1095,37 @@ export async function retryCustomerRefundWallet(session: CustomerSession, origin
       fresh.funding.amount_tinybar !== row.amount_tinybar || fresh.funding.abi_json !== row.abi_json) {
     throw new CommerceIssue("Funded escrow changed before the refund retry", 409);
   }
+  const transaction = { ...fresh.transaction,
+    nonce: await walletNonce(rpc, session.ownerAddress, row.transaction_json, row.state === "failed", async blockTag => {
+      const code = hex(await rpc("eth_getCode", [row.contract_address, blockTag]), "consumed nonce escrow runtime");
+      if (code === "0x" || createHash("sha256").update(Buffer.from(code.slice(2), "hex")).digest("hex") !== fresh.funding.runtime_sha256 ||
+          !(["funded", "approved"] as ContractState[]).includes(await escrowState(fresh.funding, BigInt(row.escrow_id), blockTag))) {
+        throw new CommerceIssue("Consumed nonce recovery cannot prove the same refundable escrow", 409);
+      }
+    }) };
   return withRefundTable(db => db.transaction(() => {
     const commitTime = Math.floor(Date.now() / 1000);
     const current = db.prepare(`SELECT * FROM customer_refund_intents
       WHERE id = ? AND owner_address = ? AND origin = ?`).get(id, session.ownerAddress, origin.origin) as RefundRow | undefined;
-    if (!current || current.state !== "prepared" || current.wallet_open_count !== 1 ||
-        current.wallet_opened_at === null || current.wallet_opened_at > commitTime - 900 ||
-        current.transaction_hash || current.observed_hash || current.confirmed_hash ||
-        current.abi_json !== fresh.funding.abi_json || !currentCommerceSession(db, session, origin, commitTime)) {
-      throw new CommerceIssue("Refund retry was already used or its chain state changed", 409);
+    if (!current || current.state !== row.state || current.wallet_open_count !== row.wallet_open_count ||
+        current.wallet_attempt_id !== row.wallet_attempt_id || current.transaction_hash !== row.transaction_hash ||
+        current.observed_hash || current.confirmed_hash || current.abi_json !== fresh.funding.abi_json ||
+        !currentCommerceSession(db, session, origin, commitTime)) {
+      throw new CommerceIssue("Refund retry was already opened or its journal changed", 409);
     }
-    db.prepare(`UPDATE customer_refund_intents SET wallet_opened_at = ?, wallet_open_count = 2,
+    const attemptId = recordWalletAttempt(db, "refund", current, transaction, commitTime, row.wallet_opened_at);
+    db.prepare(`UPDATE customer_refund_intents SET state = 'prepared', wallet_opened_at = ?,
+      wallet_open_count = wallet_open_count + 1, wallet_attempt_id = ?, transaction_hash = NULL,
       transaction_json = ?, updated_at = ? WHERE id = ?`)
-      .run(commitTime, JSON.stringify(fresh.transaction), commitTime, id);
-    return { refund: asRefund({ ...current, wallet_opened_at: commitTime, wallet_open_count: 2 }),
-      transaction: fresh.transaction,
-      warning: "A previous wallet transaction may still be pending. This is a second manual refund attempt; it can spend gas even if the first succeeds. The escrow can refund only once." };
+      .run(commitTime, attemptId, JSON.stringify(transaction), commitTime, id);
+    return { refund: asRefund({ ...current, state: "prepared", transaction_hash: null,
+      wallet_attempt_id: attemptId, wallet_opened_at: commitTime, wallet_open_count: current.wallet_open_count + 1 }),
+      transaction, warning: "All earlier attempts remain recorded. A pending transaction may still succeed; replacement or legacy recovery can cost additional gas. The contract refunds this escrow only once." };
   }).immediate());
 }
 
 export function attachCustomerRefundHash(session: CustomerSession, origin: URL,
-    id: string, transactionHash: string): RefundRecord {
+    id: string, transactionHash: string, attemptId?: string): RefundRecord {
   if (!idPattern.test(id) || !hashPattern.test(transactionHash)) {
     throw new CommerceIssue("Invalid refund transaction reference", 400);
   }
@@ -1099,7 +1133,9 @@ export function attachCustomerRefundHash(session: CustomerSession, origin: URL,
     const row = db.prepare(`SELECT * FROM customer_refund_intents
       WHERE id = ? AND owner_address = ? AND origin = ?`)
       .get(id, session.ownerAddress, origin.origin) as RefundRow | undefined;
-    if (!row || row.wallet_opened_at === null ||
+    if (!row) throw new CommerceIssue("Refund attempt is missing", 404);
+    if (!attachWalletAttempt(db, "refund", row, transactionHash.toLowerCase(), attemptId)) return asRefund(row);
+    if (row.wallet_opened_at === null ||
         (row.transaction_hash && row.transaction_hash !== transactionHash.toLowerCase()) ||
         (row.state !== "prepared" && row.state !== "submitted")) {
       throw new CommerceIssue("Refund attempt does not accept this transaction hash", 409);
@@ -1178,7 +1214,8 @@ export async function reconcileCustomerRefund(session: CustomerSession, origin: 
   function mark(state: "failed" | "conflict"): RefundRecord {
     return withRefundTable(db => {
       db.prepare(`UPDATE customer_refund_intents SET state = ?, updated_at = ?
-        WHERE id = ? AND state != 'executed'`).run(state, Math.floor(Date.now() / 1000), id);
+        WHERE id = ? AND state != 'executed' AND wallet_attempt_id IS ? AND transaction_hash IS ?`)
+        .run(state, Math.floor(Date.now() / 1000), id, row.wallet_attempt_id, row.transaction_hash);
       return asRefund(db.prepare("SELECT * FROM customer_refund_intents WHERE id = ?").get(id) as RefundRow);
     });
   }
@@ -1204,7 +1241,8 @@ export async function reconcileCustomerRefund(session: CustomerSession, origin: 
   if (!mirror || mirror.contract_id !== row.contract_id) throw new Error("Mirror refund contract ID mismatch");
   assertRefundReceiptHashes(hash, receipt.transactionHash, mirror.hash);
   if (status !== 1n || mirror.result !== "SUCCESS") {
-    if (status === 0n && mirror.result !== "SUCCESS") return mark(eventHash ? "conflict" : "failed");
+    if (status === 0n && typeof mirror.result === "string" && /^[A-Z][A-Z0-9_]+$/.test(mirror.result) &&
+        !["SUCCESS", "UNKNOWN", "PENDING"].includes(mirror.result)) return mark(eventHash ? "conflict" : "failed");
     throw new Error("RPC and Mirror disagree about the buyer refund");
   }
   if (!Array.isArray(receipt.logs)) throw new Error("Refund receipt has no logs");

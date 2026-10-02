@@ -27,13 +27,40 @@ Other checks:
 
 | Command | Covers |
 | --- | --- |
-| `npm run test:e2e` | Playwright smoke tests in desktop and mobile Chromium against the production server: every page, keyboard skip link, live directory, a real HCS message, small-screen layout, and disabled write APIs |
+| `npm run test:e2e` | Deterministic Playwright checks against production Next.js: desktop/mobile navigation, exact signed HCS fixture bytes and payer key, independent failure/empty/tampering cases, small-screen layout and disabled writes; simulated-wallet browser authentication against real signatures and disposable SQLite |
 | `npm run check:scaffold-text` | Every tracked text file survives, unchanged, the text rewrite the Scaffold-HBAR CLI applies for npm |
 | `npm run check:scaffold` | The bounty gate: scaffolds this checkout with the published CLI, confirms no template file changed, then runs a fresh install, lint and build, boots the production server and requests the core routes. Add `-- --remote` to scaffold from GitHub instead |
 | `npm run test:live` | Read-only checks against the live directory and Mirror Node |
 | `go test ./... && go vet ./...` in `packages/neuron-go` | Go 1.26.8 HCS writer and legacy gateway |
 
 The optional reference bridge has separate checks in [its README](../packages/neuron-reference/README.md#verification). CI runs all of the above except `test:live` on every pull request.
+
+### Browser test boundaries
+
+Build first with `npm run build` and install Chromium with `npx playwright install chromium`. The default `npm run test:e2e` starts its own production servers on ports 3210 and 3211 (override `E2E_PORT` to change the first port). It refuses to reuse an existing server. A test-only Node preload supplies deterministic Mirror/directory responses to the **server-side** fetches; Playwright browser routing alone cannot intercept Server Component reads. Unknown external requests fail closed. The success test requires the exact topic, payer, sequence, length, SHA-256 and verified payer key, with no alert. The separate outage test requires an alert and no message evidence. Neither an error nor an empty topic counts as success.
+
+To prove the success assertion cannot pass an outage, run the negative mutation check. This command **must fail** the HCS success test:
+
+```sh
+E2E_FORCE_MIRROR_OUTAGE=1 npm run test:e2e -- --grep 'verifies exact HCS bytes' --project=desktop
+```
+
+The `wallet-simulation` project uses an in-browser EIP-1193/EIP-6963 provider with random, real EVM signatures, real HTTP authentication and a disposable owner-only SQLite journal. It checks explicit provider selection, rejection, chain mismatch, events during signing, account/chain/disconnect invalidation, provider conflicts, origin/Host rejection, challenge replay and logout. It does **not** prove an installed wallet, WalletConnect relay or on-chain payment works. Those require separately recorded live tests.
+
+For an independent, read-only **live browser** check, provide a known latest message on a dedicated topic:
+
+```sh
+E2E_LIVE=1 \
+E2E_HCS_TOPIC_ID=0.0.REPLACE_TOPIC \
+E2E_HCS_PAYER_ACCOUNT_ID=0.0.REPLACE_PAYER \
+E2E_HCS_FINAL_SEQUENCE=REPLACE_SEQUENCE \
+E2E_HCS_BYTE_LENGTH=REPLACE_LENGTH \
+E2E_HCS_SHA256=REPLACE_SHA256 \
+E2E_HCS_REQUIRE_SIGNED=1 \
+npm run test:e2e
+```
+
+Live mode has no fixture preload or browser route mocks, runs both desktop and mobile, and fails rather than skipping missing fixture inputs. Record expected values independently from the submission receipt and original payload; do not derive expectations from the rendered page. `E2E_HCS_REQUIRE_SIGNED=1` additionally requires the recovered signer to match the current HCS payer key. The viewer reads the **latest** message, so later submissions intentionally invalidate an old fixture expectation. `E2E_BASE_URL` is accepted only in live mode for checking an already-running deployment; its revision and configuration are the operator's responsibility.
 
 ### Live fixtures
 
@@ -55,7 +82,7 @@ Each group is optional. Missing groups are skipped; incomplete groups fail. Mult
 - Consensus timestamp: `1790499083.745312717`
 - Fee: **0.00386065 testnet HBAR**, under the 0.1 HBAR cap
 
-The e2e suite reads this topic through the **Evidence** page.
+This is historical live evidence. Default browser tests use clearly labeled deterministic fixtures; the separate live browser mode can check this message only while it remains the topic's latest message.
 
 ### Paid document purchase in MetaMask
 
@@ -83,11 +110,26 @@ A separate escrow returned the full **0.01 NTT** after its deadline: [refund](ht
 - `BuyerEscrow` is [deployed on testnet](https://testnet.mirrornode.hedera.com/api/v1/contracts/0.0.10730636). Buyer-approved withdrawal and both timeout refund paths were exercised there. See the [contract guide](contracts.md).
 - The legacy gateway delivered real seller bytes over QUIC and WSS, with CRC-valid DF17 aircraft frames and stop/reconnect handling. A [seller request](https://testnet.mirrornode.hedera.com/api/v1/transactions/0.0.10725146-1790419678-383050168) reached the configured seller, and gateway and subscriber byte counts matched.
 
+## Recovery verification — 2 October 2026
+
+These are fresh testnet transactions from the recovery fixes. The buyer used a disposable scripted ECDSA wallet against the production API or reference bridge. They are separate from the earlier installed-MetaMask runs and from the simulated-provider browser tests.
+
+| Recovery path | Observed result and public evidence |
+| --- | --- |
+| Failed native funding | An expired quote [reverted](https://testnet.mirrornode.hedera.com/api/v1/contracts/results/0x68d750d0dedd7b17627e6496931907b2f096ff048bc4f41ec865d2d8bed9b575). The app proved expiry and unused terms, retained the failed hash, and a new authenticated session [funded escrow 7](https://testnet.mirrornode.hedera.com/api/v1/contracts/results/0x6385d9b74163566fdeed0169e52b3a226195b185a53e9a4914a924236e909c0b). |
+| Native refund recovery | Two wallet openings without broadcast remained retryable. A deliberately insufficient-gas [refund failed](https://testnet.mirrornode.hedera.com/api/v1/contracts/results/0xb8126e5e3b82d03fd2f71984bd5bf9d77b0092984465f7323a6f0d77fcbc0a1e); the app then [refunded exactly 0.01 HBAR](https://testnet.mirrornode.hedera.com/api/v1/contracts/results/0x270cbf3c930a48a7c04fa0f394d5f8fac312d3297e9631ff5f6ddb8dff9982e6). Further retry was refused. Restart retained all six funding/refund openings; another buyer received 404 and a cross-origin write received 403. |
+| Native approval nonce cancellation | With explicitly controlled request/HCS/transport prerequisites, production approval recovery handled a mined self-cancellation and [approved at a new nonce](https://testnet.mirrornode.hedera.com/api/v1/contracts/results/0x32b71590d3c5791fc0773c65d9e57b0869e18f61a6da2b6c449ae06f15e6800e). The seller [received exactly 0.001 HBAR](https://testnet.mirrornode.hedera.com/api/v1/contracts/results/0x3899de2638a85e0027c3f7c206c5d12bd27b8ccdb6cdf1cccf6957bbba7c8ddb). This mixes fixture prerequisites with real settlement; it is not a complete canonical-directory seller flow. |
+| Reference shared allowance and surplus | Two purchases recovered after the first consumed their shared allowance. Real HCS negotiation and an 80-byte libp2p transfer completed despite one extra token base unit. Escrow 12 [paid exactly 1,000,000 base units](https://testnet.mirrornode.hedera.com/api/v1/contracts/results/0xde615791fb6c8072765a8ea53f754002dea496a0dc6b0bf44d1097fafd5024d6), then [refunded the remaining 1](https://testnet.mirrornode.hedera.com/api/v1/contracts/results/0x3719b81532a4c5d9e8731e2126449239f997f6c89df217da75a4129ed872a5a0). Unpaid escrow 13 [refunded 1,000,001](https://testnet.mirrornode.hedera.com/api/v1/contracts/results/0x3c2a2ecd650c2cbdf9396ae25f5e475a167dc21e436e4f2e8d37d8d1d9871346). Both balances ended at zero after the real 600-second deadline. |
+| Reference restart and migration | A bridge restart with deliberately lost confirmation markers reconciled original live HCS bytes and transaction IDs. A disposable copy of a genuine version-1 paid journal migrated with its six signed messages and transaction history intact; the original journal was untouched. Local child-process crash tests separately cover a killed writer. |
+| Strict live HCS browser check | Desktop and mobile verified a freshly submitted, signed two-chunk message ending at [topic 0.0.10823693 sequence 19](https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10823693/messages/19): 1,093 bytes, SHA-256 `d4154e8624069de14788549bb4c7cafec347e575c88f00fc3ab5a40c006228d9`, payer `0.0.10706215`, recovered signer matching that payer. A forced outage fails the success assertion. |
+
+The local browser suite also checks provider/account/network changes, origin replay, durable opening references, manual hash recovery and stale responses. Simulated wallet tests do not establish installed-wallet or chain compatibility. Official Mirror receipts, payout actions and resulting escrow state were independently checked for the live payment results above.
+
 ## Not yet verified
 
 | Surface | Status |
 | --- | --- |
 | Wallets other than MetaMask | Not tested |
-| Native-HBAR checkout in a browser wallet | Contract and API tested; browser checkout not tested |
+| Full native canonical-directory → request → transport → approval browser flow | Funding/refund were exercised with MetaMask during the audit; recovery fixes have scripted live-chain and simulated-browser evidence. The complete canonical seller flow still requires a controlled registered seller with reachable transport |
 | Remote third-party Neuron sellers | Not tested; the reference flow used a controlled seller |
 | Mainnet writes | Not supported; see [mainnet requirements](mainnet.md) |
