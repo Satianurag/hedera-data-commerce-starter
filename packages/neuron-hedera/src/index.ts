@@ -15,5 +15,7 @@ export type { Draft008RequestExpectation, Draft008ServiceRequest, VerifiedDraft0
   VerifiedDraft008ServiceResponse } from "./draft-008-negotiation.js";
 export { listLegacyDevices, checkLegacyDeviceBinding } from "./legacy.js";
 export type { LegacyDevice } from "./legacy.js";
+export { parseDirectSellerProfile, checkDirectSellerBinding, assertSellerUDPAddress } from "./direct-seller.js";
+export type { DirectSellerProfile } from "./direct-seller.js";
 export { ModeSFramer, aircraftStreamStatus, decodeAircraftIdentification, AircraftObservations } from "./frames.js";
 export type { ModeSFrame, AircraftObservation } from "./frames.js";

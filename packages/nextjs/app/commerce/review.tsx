@@ -31,7 +31,7 @@ type Funding = {
   settlementVerifiedAt: number | null;
 };
 type WalletTransaction = {
-  from: string; to: string; value: string; data: string; gas: string; gasPrice: string; chainId: "0x128";
+  from: string; to: string; value: string; data: string; gas: string; gasPrice: string; chainId: "0x128"; nonce?: string;
 };
 type Refund = {
   walletAttemptId?: string | null;
@@ -79,6 +79,8 @@ export default function CommerceClient({ network }: { network: "testnet" | "main
   const [recoveredRefundHash, setRecoveredRefundHash] = useState("");
   const [recoveredApprovalHash, setRecoveredApprovalHash] = useState("");
   const [pendingHash, setPendingHash] = useState<string | null>(null);
+  const [fundingRetryConsent, setFundingRetryConsent] = useState<{ attemptId: string | null; accepted: boolean }>(
+    { attemptId: null, accepted: false });
   const [refund, setRefund] = useState<Refund | null>(null);
   const [refundTx, setRefundTx] = useState<WalletTransaction | null>(null);
   const [refundBusy, setRefundBusy] = useState(false);
@@ -111,6 +113,13 @@ export default function CommerceClient({ network }: { network: "testnet" | "main
   const approvalTransportAcknowledged = approvalTransportConsent.id === approval?.id &&
     approvalTransportConsent.accepted;
   const fundingId = funding?.id ?? null;
+  const fundingRetryAccepted = fundingRetryConsent.attemptId === funding?.walletAttemptId &&
+    fundingRetryConsent.accepted;
+  const fundingRetryAvailable = Boolean(funding && funding.state === "prepared" &&
+    funding.walletAttemptId && funding.walletOpenedAt !== null && funding.runtimeSha256 && funding.abiPinned &&
+    funding.abandonedAt === null && !funding.reportedHash && !funding.observedHash && !funding.escrowId && !pendingHash &&
+    nowSeconds >= funding.walletOpenedAt + 60 && nowSeconds + 120 < funding.quoteExpiresAt &&
+    reconciliation === "current" && fundingEnabled);
 
   useEffect(() => {
     const timer = setInterval(() => setNowSeconds(Math.floor(Date.now() / 1000)), 1_000);
@@ -143,6 +152,8 @@ export default function CommerceClient({ network }: { network: "testnet" | "main
     setHistoryHasMore(body.history?.hasMore === true);
     setFundingEnabled(body.fundingEnabled === true);
     setReconciliation(body.reconciliation ?? null);
+    if (body.reconciliation === "current" && body.funding &&
+        ["executed", "failed", "conflict", "abandoned"].includes(body.funding.state)) setFundingMessage("");
     if (body.funding && !body.funding.transactionHash) {
       const saved = window.sessionStorage.getItem(`neuron-funding-hash:${body.funding.id}`);
       if (saved && /^0x[0-9a-fA-F]{64}$/.test(saved)) setPendingHash(saved);
@@ -173,6 +184,8 @@ export default function CommerceClient({ network }: { network: "testnet" | "main
     if (!body) { setRefundReconciliation("unavailable"); return; }
     setRefund(body.refund ?? null);
     setRefundReconciliation(body.reconciliation ?? null);
+    if (body.reconciliation === "current" && body.refund &&
+        ["executed", "failed", "conflict", "abandoned"].includes(body.refund.state)) setRefundMessage("");
     if (body.refund && !body.refund.transactionHash) {
       const saved = window.sessionStorage.getItem(`neuron-refund-hash:${body.refund.id}`);
       if (saved && /^0x[0-9a-fA-F]{64}$/.test(saved)) setPendingRefundHash(saved);
@@ -204,6 +217,8 @@ export default function CommerceClient({ network }: { network: "testnet" | "main
     setApproval(body.approval ?? null);
     setApprovalEnabled(body.approvalEnabled === true);
     setApprovalReconciliation(body.reconciliation ?? null);
+    if (body.reconciliation === "current" && body.approval &&
+        ["executed", "failed", "conflict"].includes(body.approval.state)) setApprovalMessage("");
     if (body.approval && !body.approval.reportedHash) {
       const saved = window.sessionStorage.getItem(`neuron-approval-hash:${body.approval.id}`);
       if (saved && /^0x[0-9a-fA-F]{64}$/.test(saved)) setPendingApprovalHash(saved);
@@ -376,9 +391,10 @@ export default function CommerceClient({ network }: { network: "testnet" | "main
     return current.ownerAddress;
   }
 
-  async function sendFunding() {
-    if (!funding || funding.state !== "prepared" || fundingBusy ||
-        funding.walletOpenedAt !== null || nowSeconds + 60 >= funding.quoteExpiresAt) return;
+  async function sendFunding(retry = false) {
+    if (!funding || funding.state !== "prepared" || walletActionBusy ||
+        (retry ? !fundingRetryAvailable || !fundingRetryAccepted :
+          funding.walletOpenedAt !== null || nowSeconds + 60 >= funding.quoteExpiresAt)) return;
     invalidateReads();
     setFundingBusy(true);
     setFundingMessage("Opening your wallet for the exact HBAR escrow transaction.");
@@ -390,13 +406,15 @@ export default function CommerceClient({ network }: { network: "testnet" | "main
       markerRequested = true;
       const opened = await fetch("/api/customer-funding", { method: "POST", cache: "no-store",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "openWallet", fundingId: funding.id }) });
+        body: JSON.stringify({ action: retry ? "retryWallet" : "openWallet", fundingId: funding.id,
+          ...(retry ? { acknowledged: true } : {}) }) });
       const openedBody = await opened.json() as { funding?: Funding; transaction?: WalletTransaction; error?: string };
       if (!opened.ok || !openedBody.funding || !openedBody.transaction) {
         throw new Error(openedBody.error ?? "Fresh funding wallet preflight failed");
       }
       window.sessionStorage.setItem(`neuron-funding-attempt:${funding.id}`, openedBody.funding.walletAttemptId ?? "");
       setFunding(openedBody.funding);
+      setFundingRetryConsent({ attemptId: null, accepted: false });
       setFundingTx(null); // A durable marker precedes any wallet submission.
       submitted = true;
       await currentBuyerWallet(provider, revision);
@@ -793,16 +811,24 @@ export default function CommerceClient({ network }: { network: "testnet" | "main
           <p>Wallet transaction prepared for <span className="mono">{fundingTx.to}</span>, value {hbar(funding.amountTinybar)}. The wallet will show its own confirmation before any HBAR moves.</p>
           <p>Maximum displayed gas cost: {hbar(((BigInt(fundingTx.gas) * BigInt(fundingTx.gasPrice) + 9_999_999_999n) / 10_000_000_000n).toString())}.</p>
           <button type="button" disabled={fundingBusy || nowSeconds + 60 >= funding.quoteExpiresAt}
-            onClick={sendFunding}>Send HBAR in wallet</button>
+            onClick={() => void sendFunding()}>Send HBAR in wallet</button>
         </>}
         {funding.state === "prepared" && !fundingTx && funding.walletOpenedAt === null &&
           funding.runtimeSha256 && funding.abiPinned && <>
           <p>A funding intent was recorded before any wallet was opened. A fresh quote, contract and gas preflight is required before this buyer can send.</p>
-          <button type="button" onClick={sendFunding} disabled={fundingBusy || !fundingEnabled ||
+          <button type="button" onClick={() => void sendFunding()} disabled={fundingBusy || !fundingEnabled ||
             nowSeconds + 60 >= funding.quoteExpiresAt}>Recheck and open funding wallet</button>
         </>}
         {funding.state === "prepared" && funding.walletOpenedAt !== null &&
-          <p className="notice">The wallet was opened for this funding attempt. Its outcome may be uncertain; reconcile instead of sending again.</p>}
+          <p className="notice">The wallet was opened for this funding attempt. Check its history and the chain outcome first. After one minute, an unreported attempt can be retried only with the original unused nonce and enough time left on the quote.</p>}
+        {fundingRetryAvailable && <div>
+          <label><input type="checkbox" checked={fundingRetryAccepted} disabled={walletActionBusy}
+            onChange={event => setFundingRetryConsent({ attemptId: funding.walletAttemptId ?? null,
+              accepted: event.target.checked })} /> I checked wallet history and understand this reopens the same funding attempt. A delayed transaction may still appear.</label>
+          <p>The server rechecks the quote, contract, chain and nonce before opening the wallet. It will refuse a known pending or consumed nonce; all previous openings stay recorded.</p>
+          <button type="button" className="secondary" disabled={walletActionBusy || !fundingRetryAccepted}
+            onClick={() => void sendFunding(true)}>Recheck and retry funding wallet</button>
+        </div>}
         {funding.state === "prepared" && !fundingTx && !funding.runtimeSha256 &&
           <p className="notice">This older funding intent has no pinned deployment record. It needs operator review before any wallet action.</p>}
         {["prepared", "failed"].includes(funding.state) && nowSeconds > funding.quoteExpiresAt && <button type="button"

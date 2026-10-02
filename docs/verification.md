@@ -4,7 +4,7 @@ How to check this template yourself, and the testnet records that show each Hede
 
 ## Local checks
 
-Use Node 22.23.3 from `.nvmrc` (Node 20.18.3 or later is supported):
+Use Node 22.23.3 from `.nvmrc`. The scaffold CI matrix also checks Node 24.21.0 LTS; Node 20 is no longer supported:
 
 ```sh
 npm ci --engine-strict
@@ -31,7 +31,7 @@ Other checks:
 | `npm run check:scaffold-text` | Every tracked text file survives, unchanged, the text rewrite the Scaffold-HBAR CLI applies for npm |
 | `npm run check:scaffold` | The bounty gate: scaffolds this checkout with the published CLI, confirms no template file changed, then runs a fresh install, lint and build, boots the production server and requests the core routes. Add `-- --remote` to scaffold from GitHub instead |
 | `npm run test:live` | Read-only checks against the live directory and Mirror Node |
-| `go test ./... && go vet ./...` in `packages/neuron-go` | Go 1.26.8 HCS writer and legacy gateway |
+| `go test ./... && go vet ./...` in `packages/neuron-go` | Go 1.27.1 HCS writer, gateway, direct seller validation and native seller command |
 
 The optional reference bridge has separate checks in [its README](../packages/neuron-reference/README.md#verification). CI runs all of the above except `test:live` on every pull request.
 
@@ -125,11 +125,33 @@ These are fresh testnet transactions from the recovery fixes. The buyer used a d
 
 The local browser suite also checks provider/account/network changes, origin replay, durable opening references, manual hash recovery and stale responses. Simulated wallet tests do not establish installed-wallet or chain compatibility. Official Mirror receipts, payout actions and resulting escrow state were independently checked for the live payment results above.
 
+## Native-HBAR purchase with an owned seller
+
+On 2 October 2026, an installed MetaMask 13.50.0 wallet completed the native flow against the current Solidity 0.8.37 contract. The app used an explicitly configured direct seller profile, validated against current Mirror keys and topics. No directory record or request/transport evidence was fabricated.
+
+| Step | Independent evidence |
+| --- | --- |
+| Deploy current contract | [Successful deployment](https://testnet.mirrornode.hedera.com/api/v1/contracts/results/0x8f272cc2184a9a35be4a70835e66b8dc4bb2c4e94256e0ad6c19d249fde3af22), contract `0.0.10828632`; 3,230 runtime bytes, SHA-256 `cf5b938bb8a7fc08ef462b3f5aec7a01e6c6005f1749a97a9dc3654392fd548d` |
+| Seller-signed quote | [Topic 0.0.10828164, final sequence 2](https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10828164/messages/2); two chunks, payer `0.0.10824371`, exact terms bound to the buyer, session, 100,000 tinybar and contract |
+| Wallet funding | [Escrow 1 funded](https://testnet.mirrornode.hedera.com/api/v1/contracts/results/0xb20df175691f779e172e502c8b369f7c7fc5a30aaca2d7fffa9dddb915ee924f) with exactly **0.001 HBAR** |
+| Buyer request | [Topic 0.0.10828161, sequence 1](https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10828161/messages/1), payer `0.0.10824392`, payload SHA-256 `1fdee59b97fca7e3aa629e215611295f9ff945923633dea50c3e2aae73461f7e` |
+| Transport and browser receipt | Real authenticated QUIC through a public UDP forwarder. Seller and independent browser WebSocket capture both contained **28,000 bytes**, SHA-256 `1b4ad542246b08c90916b70b44d12cd2d944b9cb9e740171b5ef4b26a9c61b18`. The completed same-session interval started after funding and request consensus |
+| Explicit buyer approval | [Successful approval](https://testnet.mirrornode.hedera.com/api/v1/contracts/results/0xd28b6598f2cd3a69de2985044f8e318ef5fabca52497677fd626da691c528cbd), separately confirmed in MetaMask |
+| Exact seller payment | [Successful withdrawal](https://testnet.mirrornode.hedera.com/api/v1/contracts/results/0x2f8871e967420d5f7f2a50124fecbd04dbcf2f586c1f86dd61549770da0f9f06), exact `Released` event, Mirror transfer and `Paid` storage: **100,000 tinybar**, excluding transaction fees |
+| Wallet rejection and guarded funding retry | MetaMask cancellation followed by explicit retry preserved the original intent, payment call and nonce `0x18`; [escrow 2 funded once](https://testnet.mirrornode.hedera.com/api/v1/contracts/results/0xcb8832478657f76187b4d9ba0f68f734f7eb92401c5082d8bea87133cdf6abbd) for **100,000 tinybar**. Both wallet openings remain recorded |
+| Restart, refund rejection and recovery | The app restarted while escrow 2 was funded and retained its original intent and hash. After the deadline, MetaMask cancellation followed by explicit refund retry preserved nonce `0x19` and the original call; the [successful refund](https://testnet.mirrornode.hedera.com/api/v1/contracts/results/0xf28db9fd0ba772edd7deff2ba96bbb3fd69183226f946f4007090c5422d0b8c6) returned exactly **100,000 tinybar**, excluding transaction fees. Independent RPC/Mirror reads confirm escrow 1 `Paid`, escrow 2 `Refunded`, and zero contract balance |
+| Current HCS writer and live browser checks | Go 1.27.1 submitted a signed two-chunk quote ending at [sequence 8](https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10828164/messages/8). Desktop and mobile browsers matched its independently recorded bytes, payer, signature and SHA-256 `4d39108b36040a219178d187ed5427414be1fbb7cbcc4e74e182be5e1c4f6c38`, without fixture responses |
+
+These were controlled peers on one host using a real external UDP forwarding path. The delivered bytes replayed published Mode-S reference frames; they were not fresh aircraft observations. The ADS-B gateway is a shared selected-seller feed, not confidential per-purchase file transport. The separate reference document adapter provides the per-session document workflow. The completed first delivery used Go 1.26.8; the unchanged adapter source subsequently passed the Go 1.27.1 build, tests, race and vet gates, and the later quote used that current writer.
+
+The live app also refused approval before a confirmed request, safely closed a never-broadcast rejected quote after on-chain expiry and unused-terms checks, and preserved purchase history across sign-in and application restarts. The current HTTP integration suite exercised genuine signatures and disposable SQLite state: 43 authentication/authorization checks passed, including another wallet's denied access to funding, approval and refund records. These checks sent no payment transactions.
+
 ## Not yet verified
 
 | Surface | Status |
 | --- | --- |
 | Wallets other than MetaMask | Not tested |
-| Full native canonical-directory → request → transport → approval browser flow | Funding/refund were exercised with MetaMask during the audit; recovery fixes have scripted live-chain and simulated-browser evidence. The complete canonical seller flow still requires a controlled registered seller with reachable transport |
+| Full native flow through the hosted canonical directory | The explicit owned-seller direct flow above is proven. Hosted-directory enrollment and interoperability with an uncontrolled seller remain separate, unverified integrations |
+| Live WalletConnect relay/mobile pairing | Current SDK lifecycle, timer cleanup, session invalidation and payment guards are tested; a live relay/mobile session requires an operator-owned project ID and compatible wallet |
 | Remote third-party Neuron sellers | Not tested; the reference flow used a controlled seller |
 | Mainnet writes | Not supported; see [mainnet requirements](mainnet.md) |

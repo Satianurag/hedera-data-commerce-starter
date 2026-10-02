@@ -8,7 +8,7 @@ The service delivers the actual bytes of one operator-selected, permitted file. 
 
 - Upstream repository: `https://github.com/NeuronInnovations/neuron-specs.git`.
 - Revision: `13ab01d70ac42531065094a52cd595ef7b6d3223`.
-- Build runtime: Go `1.26.8`; dependencies use the same patched Hiero, libp2p, gRPC, crypto and Pion versions as the existing Go gateway. The prepared `build-provenance.json` records the resolved module graph.
+- Build runtime: Go `1.27.1`; dependencies use the same patched Hiero, libp2p, gRPC, crypto and Pion versions as the existing Go gateway. The prepared `build-provenance.json` records the resolved module graph.
 - Payment uses the upstream `NeuronEscrow` **ERC20** ABI. Token values are integer token base units with independently checked decimals. They are never described as HBAR/tinybar. HBAR only pays network fees.
 - Protocol payloads use the original upstream `payment` serializers unchanged. `serviceParams` is the upstream-defined application map; it carries the customer wallet, chain, escrow, immutable document hash/size/name and refund deadline for this document service.
 - `agreementHash` is the upstream Keccak-256 of the canonical accepted `serviceResponse`. Its unique request ID refers to the signed service request containing exact terms.
@@ -24,7 +24,7 @@ This is an original orchestration adapter around upstream reference components. 
 
 Run `node packages/neuron-reference/scripts/prepare.mjs`. It fetches the exact revision into an external cache and compiles the original bridge overlay as `cmd/scaffold-reference`. The upstream internal Go packages require building in that module. No upstream source or binary is copied into this repository. The upstream checkout has no root license file at this revision; public redistribution of its source/binary requires separate license review. Our wrapper follows this repository's license without relicensing upstream code.
 
-The preparation command prints the absolute binary path. Set `NEURON_REFERENCE_CACHE` to change the owner-controlled build cache. Go 1.26.8 can be selected through the standard Go toolchain mechanism. A changed upstream source checkout is rejected.
+The preparation command prints the absolute binary path. Set `NEURON_REFERENCE_CACHE` to change the owner-controlled build cache. Go 1.27.1 can be selected through the standard Go toolchain mechanism. A changed upstream source checkout is rejected.
 
 Create an owner-only directory outside this repository (mode 0700). Copy `config.example.json` there as a mode-0600 file and provide:
 
@@ -47,7 +47,7 @@ Start the prepared binary without arguments. `--check` runs read-only account/to
 
 ## Restart the configured local service
 
-Use Node **22.23.3** from `.nvmrc` for installation, build and startup. `better-sqlite3` has a native binding for that Node runtime and operating system. If its binding is missing or has an ABI mismatch, select the intended Node version first, then run `npm run rebuild:native` in the repository root.
+Use Node **22.23.3** from `.nvmrc` for installation, build and startup. `better-sqlite3` 13 uses Node-API with a native binary for the operating system and architecture. If that binary is missing or incompatible with the host, select a supported Node version, then run `npm run rebuild:native` in the repository root.
 
 Keep a trusted, operator-maintained shell environment file outside the repository, mode 0600 in a 0700 directory. Include the bridge variables above with their existing paths, plus:
 
@@ -112,8 +112,8 @@ The underlying upstream escrow has draft limitations and is enabled only for thi
 Run the focused bridge checks from the prepared upstream module (`<cache>/source/impl/golang`):
 
 ```sh
-GOTOOLCHAIN=go1.26.8 go test -race -count=1 ./cmd/scaffold-reference
-GOTOOLCHAIN=go1.26.8 go vet ./cmd/scaffold-reference
+GOTOOLCHAIN=go1.27.1 go test -race -count=1 ./cmd/scaffold-reference
+GOTOOLCHAIN=go1.27.1 go vet ./cmd/scaffold-reference
 ```
 
 The local regression suite runs the pinned original ERC20 and escrow bytecode in an in-process EVM: shared allowance consumption/reapproval, stale deposit opening, dust before/after funding, exact seller payout, surplus/full refund and deposits after refund. Its seeded delivery/HCS records isolate payment accounting; they do not prove live Hedera or P2P delivery. Separate tests preserve signed bytes across versioned/legacy journals and SIGKILL, reject corruption, and reconcile an unverified persisted message against a local HTTP Mirror fixture.

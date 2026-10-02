@@ -1,7 +1,8 @@
+import { loadDirectSellerProfile } from "@neuron/hedera/direct-seller-file";
 import { randomBytes } from "node:crypto";
 import type Database from "better-sqlite3";
 import { getAddress, verifyMessage } from "ethers";
-import { confirmEscrowFunding, getMirrorAccount, getMirrorContract, getMirrorTopic,
+import { confirmEscrowFunding, checkDirectSellerBinding, getMirrorAccount, getMirrorContract, getMirrorTopic,
   getVerifiedSellerQuote, networkConfigFromEnv,
   type SellerQuote, type VerifiedSellerQuote } from "@neuron/hedera";
 import { withCustomerDatabase, type CustomerSession } from "./customer-auth";
@@ -53,6 +54,7 @@ export function customerCommerceEnabled(origin: URL | null): boolean {
 
 function commerceConfig(): CommerceConfig {
   const env = process.env;
+  loadDirectSellerProfile(env);
   const sellerAccount = env.NEURON_COMMERCE_SELLER_ACCOUNT_ID ?? "";
   const quoteTopic = env.NEURON_COMMERCE_QUOTE_TOPIC_ID ?? "";
   const serviceId = env.NEURON_COMMERCE_SERVICE_ID ?? "";
@@ -87,6 +89,8 @@ export async function preflightCustomerCommerceDescriptor(): Promise<void> {
   if (network.network !== "testnet" || network.chainId !== 296) {
     throw new Error("Customer commerce requires Hedera testnet chain 296");
   }
+  const direct = loadDirectSellerProfile(process.env);
+  if (direct) await checkDirectSellerBinding(network, direct);
   const [, , contract] = await Promise.all([
     getMirrorAccount(network, config.sellerAccount),
     getMirrorTopic(network, config.quoteTopic),
@@ -194,6 +198,8 @@ function quoteExpectation(config: CommerceConfig, session: CustomerSession, now:
 async function resolveQuote(sequence: number, session: CustomerSession, config: CommerceConfig) {
   const network = networkConfigFromEnv(process.env);
   if (network.network !== "testnet") throw new Error("Customer commerce review is testnet-only");
+  const direct = loadDirectSellerProfile(process.env);
+  if (direct) await checkDirectSellerBinding(network, direct);
   return getVerifiedSellerQuote(network, config.quoteTopic, sequence,
     quoteExpectation(config, session, Math.floor(Date.now() / 1000)));
 }

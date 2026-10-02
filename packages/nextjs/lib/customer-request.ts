@@ -1,8 +1,9 @@
+import { loadDirectSellerProfile } from "@neuron/hedera/direct-seller-file";
 import { spawn } from "node:child_process";
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { lstatSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute } from "node:path";
-import { checkLegacyDeviceBinding, getMirrorAccount, getMirrorTopic,
+import { assertSellerUDPAddress, checkLegacyDeviceBinding, checkDirectSellerBinding, getMirrorAccount, getMirrorTopic,
   listLegacyDevices, networkConfigFromEnv } from "@neuron/hedera";
 import { getCustomerSession, withCustomerDatabase, type CustomerSession } from "./customer-auth";
 import { gatewayServerEndpoint } from "./gateway-endpoint";
@@ -78,9 +79,7 @@ function requestConfig(): RequestConfig {
   const operatorKeyFile = env.HEDERA_OPERATOR_KEY_FILE ?? "";
   if (!isAbsolute(buyerKeyFile) || !isAbsolute(operatorKeyFile)) throw new Error("Customer request keys require absolute paths");
   const udpAddress = env.NEURON_PUBLIC_UDP_MULTIADDR ?? "";
-  if (!/^\/ip4\/\d{1,3}(?:\.\d{1,3}){3}\/udp\/[1-9]\d{0,4}\/quic-v1$/.test(udpAddress)) {
-    throw new Error("Customer request UDP address is invalid");
-  }
+  assertSellerUDPAddress(udpAddress, loadDirectSellerProfile(env)?.transport ?? "public");
   return {
     seller, sellerTopic, buyer, buyerTopic, shared, operator,
     buyerKeyFile, operatorKeyFile, udpAddress,
@@ -96,6 +95,8 @@ export async function preflightCustomerRequestDescriptor(): Promise<void> {
   if (network.network !== "testnet" || network.chainId !== 296) {
     throw new Error("Customer requests require Hedera testnet chain 296");
   }
+  const direct = loadDirectSellerProfile(process.env);
+  if (direct) await checkDirectSellerBinding(network, direct);
   const [, , , , sellerTopic, buyerTopic] = await Promise.all([
     getMirrorAccount(network, config.seller),
     getMirrorAccount(network, config.buyer),
@@ -250,14 +251,26 @@ export async function startCustomerRequest(session: CustomerSession, origin: URL
   const network = networkConfigFromEnv(process.env);
   let payload: Buffer;
   try {
-    const devices = await listLegacyDevices(network);
-    const seller = devices.find(device => device.accountId === config.seller);
-    if (!seller || !seller.serviceIds.includes(1) || seller.stdinTopicId !== config.sellerTopic) {
-      throw new Error("Selected seller or service is unavailable");
+    const direct = loadDirectSellerProfile(process.env);
+    if (direct) {
+      await checkDirectSellerBinding(network, direct);
+    } else {
+      const devices = await listLegacyDevices(network);
+      const seller = devices.find(device => device.accountId === config.seller);
+      if (!seller || !seller.serviceIds.includes(1) || seller.stdinTopicId !== config.sellerTopic) {
+        throw new Error("Selected seller or service is unavailable");
+      }
+      await checkLegacyDeviceBinding(network, seller);
     }
-    await checkLegacyDeviceBinding(network, seller);
     const result = await runBinary(config.requestBinary, {
       HEDERA_NETWORK: "testnet", NEURON_SELLER_ACCOUNT_ID: config.seller,
+      NEURON_SELLER_STDIN_TOPIC_ID: config.sellerTopic,
+      ...(direct ? { NEURON_SELLER_DISCOVERY: "direct",
+        NEURON_DIRECT_SELLER_PROFILE_FILE: process.env.NEURON_DIRECT_SELLER_PROFILE_FILE!,
+        NEURON_APP_ORIGIN: process.env.NEURON_APP_ORIGIN ?? "",
+        NEURON_GATEWAY_WS_URL: process.env.NEURON_GATEWAY_WS_URL ?? "",
+        NEURON_ENABLE_LOCAL_STREAM: process.env.NEURON_ENABLE_LOCAL_STREAM ?? "",
+        NEURON_ENABLE_REMOTE_STREAM: process.env.NEURON_ENABLE_REMOTE_STREAM ?? "" } : {}),
       HEDERA_BUYER_ACCOUNT_ID: config.buyer, HEDERA_BUYER_STDIN_TOPIC_ID: config.buyerTopic,
       HEDERA_SHARED_ACCOUNT_ID: config.shared, NEURON_PUBLIC_UDP_MULTIADDR: config.udpAddress,
       HEDERA_BUYER_KEY_FILE: config.buyerKeyFile,

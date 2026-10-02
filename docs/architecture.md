@@ -68,14 +68,14 @@ The manifests and lockfiles are authoritative. These pins describe the current g
 
 | Layer | Selected versions |
 | --- | --- |
-| Default runtime | Node `22.23.3`; Go `1.26.8` for server commands |
-| Web | Next / matching ESLint config `16.3.6`; React / React DOM / React types `19.3.0` |
-| Type and lint tools | TypeScript `5.9.3`; ESLint `9.39.5`; typescript-eslint `8.55.0` |
-| Wallet and state | ethers `6.17.0`; WalletConnect Ethereum Provider `2.25.0`; better-sqlite3 `12.11.1` |
-| Contracts | Foundry CLI `1.7.1` (`@foundry-rs/forge`); Solidity `0.8.26`; EVM target `paris` |
-| Go integration | Hiero SDK `2.84.0`; libp2p `0.50.0`; coder/websocket `1.8.15` |
+| Default runtime | Node `22.23.3` / `24.21.0` LTS; Go `1.27.1` for server commands |
+| Web | Next / matching Next ESLint plugin `16.3.8`; React / React DOM / React types `19.3.0` |
+| Type and lint tools | TypeScript `6.0.3`; ESLint `10.11.0`; typescript-eslint `8.71.0`; Oxlint `1.86.0` |
+| Wallet and state | ethers `6.17.0`; WalletConnect Universal Provider `2.25.0`; QR generator `2.0.4`; better-sqlite3 `13.0.3` |
+| Contracts | Foundry CLI `1.7.1` (`@foundry-rs/forge`); Solidity `0.8.37`; EVM target `paris` |
+| Go integration | Hiero SDK `2.85.1`; libp2p `0.50.0`; coder/websocket `1.8.15` |
 
-Keep native bindings aligned with the deployment OS, architecture and Node runtime. Review peer ranges, engines, security findings and meaningful regressions together when updating. ESLint 9 is a known deprecated maintenance pin; historical Node 20 compatibility is not a reason to deploy an unsupported runtime. The template does not require an unpublished Neuron SDK package or the JavaScript Hedera SDK.
+Keep native bindings aligned with the deployment OS and architecture. better-sqlite3 13 uses Node-API; the runtime and CI remain pinned to supported Node 22 and 24 LTS releases. ESLint 10 runs current Next and React Hooks rules; Oxlint runs the corresponding React, accessibility and import checks without the old ESLint-9-only plugin dependencies. TypeScript 6.0.3 is the current compatible compiler API: typescript-eslint explicitly rejects TypeScript 7, so a version-number-only upgrade would break linting. Review peer ranges, engines, security findings and meaningful regressions together when updating. The template does not require an unpublished Neuron SDK package or the JavaScript Hedera SDK.
 
 ## Structure references
 

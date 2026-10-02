@@ -404,15 +404,36 @@ export async function prepareCustomerFunding(session: CustomerSession, origin: U
 }
 
 export async function openCustomerFundingWallet(session: CustomerSession, origin: URL,
-    id: string): Promise<Readonly<{ funding: FundingRecord; transaction: WalletTransaction }>> {
+    id: string, retry = false): Promise<Readonly<{ funding: FundingRecord; transaction: WalletTransaction }>> {
   if (process.env.NEURON_ENABLE_CUSTOMER_APPROVAL !== "true") {
     throw new CommerceIssue("New escrow funding requires the buyer approval path to be enabled", 409);
   }
   if (!idPattern.test(id)) throw new CommerceIssue("Invalid funding attempt reference", 400);
+  if (retry) await reconcileCustomerFunding(session, origin, id);
   const row = fundingRow(session, origin, id);
-  if (row.state !== "prepared" || row.abandoned_at !== null || row.wallet_opened_at !== null ||
-      row.session_id !== session.sessionId) {
+  const checkedAt = Math.floor(Date.now() / 1000);
+  if ((!retry && (row.state !== "prepared" || row.wallet_opened_at !== null)) ||
+      (retry && (!(["prepared", "submitted"] as FundingState[]).includes(row.state) ||
+        row.wallet_opened_at === null || row.wallet_opened_at > checkedAt - 60 ||
+        row.quote_expires_at <= checkedAt + 120 || !row.wallet_attempt_id ||
+        row.transaction_hash || row.observed_hash || row.confirmed_hash || row.escrow_id)) ||
+      row.abandoned_at !== null || row.session_id !== session.sessionId || session.expiresAt <= checkedAt) {
     throw new CommerceIssue("This funding attempt may already have reached a wallet; reconcile before another send", 409);
+  }
+  const earlierAttempts = retry ? withFundingTable(db => db.prepare(`SELECT id, nonce, transaction_json, reported_hash
+    FROM customer_wallet_attempts WHERE kind = 'funding' AND intent_id = ? ORDER BY opened_at, id`)
+    .all(id) as { id: string; nonce: string | null; transaction_json: string; reported_hash: string | null }[]) : [];
+  const original = JSON.parse(row.transaction_json) as WalletTransaction;
+  if (retry && (!original.nonce || !earlierAttempts.some(attempt => attempt.id === row.wallet_attempt_id) ||
+      earlierAttempts.some(attempt => {
+        const previous = JSON.parse(attempt.transaction_json) as WalletTransaction;
+        return attempt.reported_hash || attempt.nonce !== original.nonce || previous.nonce !== original.nonce ||
+          previous.from !== original.from || previous.to !== original.to || previous.data !== original.data ||
+          previous.value !== original.value || previous.chainId !== original.chainId;
+      }))) {
+    // A reported hash, unknown legacy nonce or changed payload requires recovery,
+    // not a replacement funding transaction. Every opening remains in the journal.
+    throw new CommerceIssue("Earlier funding attempts need hash reconciliation; only the original unreported nonce can be retried", 409);
   }
   const { verified } = await reverifyReviewedCommerceIntent(session, origin, row.quote_intent_id);
   if (verified.termsHash.toLowerCase() !== row.terms_hash.toLowerCase() ||
@@ -429,16 +450,32 @@ export async function openCustomerFundingWallet(session: CustomerSession, origin
       fresh.runtimeSha256 !== row.runtime_sha256) {
     throw new CommerceIssue("The reviewed escrow runtime changed before wallet funding", 409);
   }
-  const transaction = { ...fresh.transaction, nonce: await walletNonce(rpc, session.ownerAddress) };
+  if (retry && (fresh.transaction.from !== original.from || fresh.transaction.to !== original.to ||
+      fresh.transaction.data !== original.data || fresh.transaction.value !== original.value ||
+      fresh.transaction.chainId !== original.chainId)) {
+    throw new CommerceIssue("Funding retry differs from the original buyer, contract, value, call or network", 409);
+  }
+  const transaction = { ...fresh.transaction, nonce: await walletNonce(rpc, session.ownerAddress,
+    retry ? row.transaction_json : undefined) };
+  if (retry && (transaction.nonce !== original.nonce ||
+      quantity(await rpc("eth_getTransactionCount", [session.ownerAddress, "pending"]), "pending funding nonce") !==
+        quantity(original.nonce, "original funding nonce"))) {
+    throw new CommerceIssue("The original funding nonce is pending or consumed; reconcile instead of opening another wallet request", 409);
+  }
   return withFundingTable(db => db.transaction(() => {
     const now = Math.floor(Date.now() / 1000);
     const current = db.prepare(`SELECT * FROM customer_funding_intents
       WHERE id = ? AND owner_address = ? AND origin = ?`).get(id, session.ownerAddress, origin.origin) as FundingRow | undefined;
-    if (!current || current.state !== "prepared" || current.abandoned_at !== null ||
-        current.wallet_opened_at !== null ||
+    const attemptsChanged = retry && JSON.stringify(db.prepare(`SELECT id, nonce, transaction_json, reported_hash
+      FROM customer_wallet_attempts WHERE kind = 'funding' AND intent_id = ? ORDER BY opened_at, id`).all(id)) !==
+        JSON.stringify(earlierAttempts);
+    if (!current || current.state !== row.state || current.abandoned_at !== null ||
+        current.wallet_opened_at !== row.wallet_opened_at || current.wallet_attempt_id !== row.wallet_attempt_id ||
+        current.transaction_hash !== row.transaction_hash || current.observed_hash || current.confirmed_hash || current.escrow_id ||
+        current.transaction_json !== row.transaction_json || attemptsChanged ||
         current.session_id !== session.sessionId || current.runtime_sha256 !== fresh.runtimeSha256 ||
         current.abi_json !== escrowAbiJson ||
-        !currentCommerceSession(db, session, origin, now) || row.quote_expires_at <= now + 60) {
+        !currentCommerceSession(db, session, origin, now) || row.quote_expires_at <= now + (retry ? 120 : 60)) {
       throw new CommerceIssue("Funding wallet opening expired or was already attempted", 409);
     }
     const attemptId = recordWalletAttempt(db, "funding", current, transaction, now, null);
@@ -447,6 +484,12 @@ export async function openCustomerFundingWallet(session: CustomerSession, origin
       .run(now, JSON.stringify(transaction), attemptId, now, id);
     return { funding: asRecord({ ...current, wallet_opened_at: now, wallet_attempt_id: attemptId }), transaction };
   }).immediate());
+}
+
+export async function retryCustomerFundingWallet(session: CustomerSession, origin: URL,
+    id: string, acknowledged: boolean): Promise<Readonly<{ funding: FundingRecord; transaction: WalletTransaction }>> {
+  if (acknowledged !== true) throw new CommerceIssue("Explicit acknowledgement of the funding retry is required", 400);
+  return openCustomerFundingWallet(session, origin, id, true);
 }
 
 export function attachCustomerFundingHash(session: CustomerSession, origin: URL,
@@ -458,12 +501,13 @@ export function attachCustomerFundingHash(session: CustomerSession, origin: URL,
     const row = db.prepare(`SELECT * FROM customer_funding_intents
       WHERE id = ? AND owner_address = ? AND origin = ?`)
       .get(id, session.ownerAddress, origin.origin) as FundingRow | undefined;
-    if (!row || row.abandoned_at !== null || row.wallet_opened_at === null ||
+    if (!row) throw new CommerceIssue("Funding attempt is missing", 404);
+    if (!attachWalletAttempt(db, "funding", row, transactionHash.toLowerCase(), attemptId)) return asRecord(row);
+    if (row.abandoned_at !== null || row.wallet_opened_at === null ||
         (row.transaction_hash && row.transaction_hash.toLowerCase() !== transactionHash.toLowerCase()) ||
         (row.state !== "prepared" && row.state !== "submitted")) {
       throw new CommerceIssue("Funding attempt does not accept this transaction hash", 409);
     }
-    attachWalletAttempt(db, "funding", row, transactionHash.toLowerCase(), attemptId);
     db.prepare(`UPDATE customer_funding_intents SET transaction_hash = ?, state = 'submitted', updated_at = ?
       WHERE id = ? AND state IN ('prepared', 'submitted')`)
       .run(transactionHash.toLowerCase(), Math.floor(Date.now() / 1000), id);
