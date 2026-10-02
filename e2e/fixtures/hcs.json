@@ -1,0 +1,19 @@
+{
+  "topic": "0.0.900001",
+  "payer": "0.0.900002",
+  "sequence": 7,
+  "byteLength": 241,
+  "sha256": "585c006bee92b1849b5226ac462142228c674324f513f2d80e14cc5333b9b02f",
+  "envelope": {
+    "senderAddress": "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+    "signature": "KeAcbmf6DrifWKYyiCCEqYhSHbWtcdaX/BmkOTUMBrhG+/3xAV1ZfilJdPgkfBJsqzZjQsIRmUfKFCL1EGkWFwA=",
+    "timestamp": "1700000000000000000",
+    "sequenceNumber": "1",
+    "payload": "SGVsbG8="
+  },
+  "publicKey": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+  "outageTopic": "0.0.900003",
+  "emptyTopic": "0.0.900004",
+  "incompleteTopic": "0.0.900005",
+  "tamperedTopic": "0.0.900006"
+}

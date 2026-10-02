@@ -7,7 +7,8 @@ import ts from "typescript";
 const source = readFileSync(new URL("../lib/commerce-guards.ts", import.meta.url), "utf8");
 const compiled = ts.transpileModule(source, { compilerOptions: {
   module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-const context = { exports: {} }; vm.runInNewContext(compiled, context);
+let accessAllowed = true;
+const context = { exports: {}, require: () => ({ customerAccessAllowed: () => accessAllowed }) }; vm.runInNewContext(compiled, context);
 const { currentCommerceSession, assertRefundReceiptHashes } = context.exports;
 
 test("financial commit rejects a revoked, expired or differently owned durable session", () => {
@@ -20,6 +21,7 @@ test("financial commit rejects a revoked, expired or differently owned durable s
     assert.equal(live(), false);
     db.prepare("INSERT INTO customer_sessions VALUES (?, ?, ?, NULL, ?)").run("session", "buyer", origin.origin, 200);
     assert.equal(live(), true);
+    accessAllowed = false; assert.equal(live(), false); accessAllowed = true;
     db.exec("UPDATE customer_sessions SET revoked_at = 99"); assert.equal(live(), false);
     db.exec("UPDATE customer_sessions SET revoked_at = NULL, expires_at = 100"); assert.equal(live(), false);
     db.exec("UPDATE customer_sessions SET expires_at = 200, owner_address = 'other'"); assert.equal(live(), false);

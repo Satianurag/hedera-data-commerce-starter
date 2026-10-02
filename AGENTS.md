@@ -11,7 +11,7 @@ This is a reusable Neuron × Scaffold-HBAR template. Keep the default app usable
 - `packages/neuron-reference`: original bridge built against a pinned external reference checkout.
 - `deploy/testnet`: portable Linux deployment; never assume a particular cloud account or host.
 
-Use Node **22.23.3** from `.nvmrc`, the committed lockfile and Go **1.26.8** for Go packages. Start with `npm ci --engine-strict`. Finish implementation before the consolidated checks: `npm run verify` (tests, types, lint, dependency tree, audit), `npm run check:scaffold-text` and, for UI changes, `npm run test:e2e`. Run `go test ./...` and `go vet ./...` in `packages/neuron-go` when changing Go code. The reference bridge has a separate prepared-module check in its README.
+Use Node **22.23.3** from `.nvmrc` (Node **24.21.0** is the second supported LTS runtime), the committed lockfile and supported Go **1.27.1** for Go packages. Start with `npm ci --engine-strict`. Finish implementation before the consolidated checks: `npm run verify` (tests, types, lint, dependency tree, audit), `npm run check:scaffold-text` and, for UI changes, `npm run test:e2e`. Run `go test ./...` and `go vet ./...` in `packages/neuron-go` when changing Go code. The reference bridge has a separate prepared-module check in its README.
 
 Do not force the newest major release into the graph. Check primary-source release/engine/peer metadata and retain a supported compatible set. A generated file or dependency update is not a reason to repeat funded tests. Do not introduce a second package manager or unused framework.
 
@@ -28,7 +28,7 @@ Do not force the newest major release into the graph. Check primary-source relea
 
 ## Scope and references
 
-- The reference target is `NeuronInnovations/neuron-specs@13ab01d70ac42531065094a52cd595ef7b6d3223`. The optional bridge builds upstream in an external cache. There is no published Neuron TypeScript SDK dependency. Do not bundle upstream source or binaries without resolving licensing.
+- The reference target is `NeuronInnovations/neuron-specs@13ab01d70ac42531065094a52cd595ef7b6d3223`. The optional bridge builds upstream in an external cache. The default app does not require an unpublished Neuron SDK dependency. Do not bundle upstream source or binaries without resolving licensing.
 - Mainnet is read-only. Never treat a read-only mainnet boot as a mainnet payment result.
 - [Verification](docs/verification.md) holds the reproducible checks and testnet receipts. A dependency or documentation change is not a reason to repeat funded transactions.
 

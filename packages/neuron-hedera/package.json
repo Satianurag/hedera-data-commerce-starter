@@ -9,12 +9,16 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./direct-seller-file": {
+      "types": "./dist/direct-seller-file.d.ts",
+      "default": "./dist/direct-seller-file.js"
     }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test test/network.test.mjs test/hcs.test.mjs test/frames.test.mjs test/legacy.test.mjs test/signed-topic.test.mjs test/commerce.test.mjs test/draft-008-negotiation.test.mjs",
+    "test": "node --test test/network.test.mjs test/hcs.test.mjs test/frames.test.mjs test/legacy.test.mjs test/signed-topic.test.mjs test/commerce.test.mjs test/draft-008-negotiation.test.mjs test/native-quote.test.mjs test/direct-seller.test.mjs",
     "test:live": "node --test test/live.test.mjs"
   },
   "dependencies": {

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.37;
 
 contract BuyerEscrow {
     enum State { None, Funded, Approved, Paid, Refunded }

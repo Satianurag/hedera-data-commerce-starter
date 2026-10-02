@@ -11,6 +11,7 @@ type MirrorTopic = {
   topic_id: string;
   deleted: boolean;
   submit_key: unknown;
+  custom_fees?: { fixed_fees?: unknown[] };
 };
 
 type MirrorContract = {

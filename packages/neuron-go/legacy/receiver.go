@@ -41,6 +41,16 @@ func SellerPeerID(compressedPublicKeyHex string) (peer.ID, error) {
 }
 
 func NewReceiver(ctx context.Context, buyerKey crypto.PrivKey, sellerKeyHex string, port uint16, onBytes func([]byte) error) (*Receiver, error) {
+	return newReceiver(ctx, buyerKey, sellerKeyHex, port, "0.0.0.0", onBytes)
+}
+
+// NewLoopbackReceiver confines explicitly local direct-seller development to
+// the local machine while retaining the same peer identity and protocol checks.
+func NewLoopbackReceiver(ctx context.Context, buyerKey crypto.PrivKey, sellerKeyHex string, port uint16, onBytes func([]byte) error) (*Receiver, error) {
+	return newReceiver(ctx, buyerKey, sellerKeyHex, port, "127.0.0.1", onBytes)
+}
+
+func newReceiver(ctx context.Context, buyerKey crypto.PrivKey, sellerKeyHex string, port uint16, bindIP string, onBytes func([]byte) error) (*Receiver, error) {
 	if buyerKey == nil || onBytes == nil {
 		return nil, errors.New("buyer key and byte consumer are required")
 	}
@@ -48,7 +58,7 @@ func NewReceiver(ctx context.Context, buyerKey crypto.PrivKey, sellerKeyHex stri
 	if err != nil {
 		return nil, err
 	}
-	h, err := libp2p.New(libp2p.Identity(buyerKey), libp2p.ListenAddrStrings(fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic-v1", port)))
+	h, err := libp2p.New(libp2p.Identity(buyerKey), libp2p.ListenAddrStrings(fmt.Sprintf("/ip4/%s/udp/%d/quic-v1", bindIP, port)))
 	if err != nil {
 		return nil, err
 	}

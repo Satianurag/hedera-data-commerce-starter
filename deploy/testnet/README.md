@@ -25,7 +25,7 @@ node deploy/testnet/stage-app.mjs
 
 `stage-app.mjs` copies static/public assets into the standalone tree and prints the server path. Transfer the **whole** `packages/nextjs/.next/standalone` tree, preserving its relative layout, into a versioned release directory such as `/opt/neuron-customer-testnet/releases/<revision>`. Point `/opt/neuron-customer-testnet/current` to the chosen release. Keep releases readable by the service user and writable only by the deployer. Record revision and artifact checksum; retain the previous release for rollback.
 
-For the optional legacy adapter, build its Linux binaries with Go **1.26.8**:
+For the optional legacy adapter, build its Linux binaries with Go **1.27.1**:
 
 ```sh
 cd packages/neuron-go
