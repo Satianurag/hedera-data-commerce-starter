@@ -173,3 +173,41 @@ test("expired funding recovery explains the new authenticated session requiremen
   await expect(page.getByText(/For another purchase, sign out and sign in again/)).toBeVisible();
   await expect(page.getByText(/A quote for the previous session cannot be reused/)).toBeVisible();
 });
+
+for (const state of ["paid", "refunded", "abandoned", "prepared", "failed", "submitted", "conflict", "absent"] as const) {
+  test(`expired quote guidance matches the available funding action for ${state} history (simulated)`, async ({ page }) => {
+    const { funding, calls } = await scenario(page, "funding");
+    const now = Math.floor(Date.now() / 1000);
+    Object.assign(funding, { state: state === "paid" || state === "refunded" ? "executed" : state,
+      contractState: state === "paid" || state === "refunded" ? state : null, quoteExpiresAt: now - 60,
+      abandonedAt: state === "abandoned" ? now - 30 : null });
+    if (state === "absent") await page.route("**/api/customer-funding?*", route => route.fulfill({ json: {
+      funding: null, history: { records: [], hasMore: false }, reconciliation: "current", fundingEnabled: true,
+    } }));
+    await page.route("**/api/customer-commerce", route => route.fulfill({ json: {
+      seller: { network: "testnet", chainId: 296, buyerAddress: buyer, sessionId: "s".repeat(32),
+        sessionExpiresAt: now + 900, sellerAccount: "0.0.456", quoteTopic: "0.0.789", serviceId: "service1",
+        maxSpendTinybar: "1000000", escrowContractId: "0.0.123", escrowAddress: buyer },
+      intent: { id: "current-expired-quote", state: "reviewed", quoteTopic: "0.0.789", quoteSequence: 1,
+        termsHash: funding.termsHash, reviewMessage: "Reviewed quote", reviewBy: now - 60, reviewedAt: now - 120,
+        terms: { sellerAddress: buyer, buyerAddress: buyer, serviceId: "service1", sessionId: "s".repeat(32),
+          amountTinybar: "1000000", maxAmountTinybar: "1000000", durationSeconds: "60",
+          expiresAt: String(now - 60), refundAfter: String(now + 900), escrowContractId: "0.0.123", escrowAddress: buyer } },
+    } }));
+    await page.reload();
+    const guidance = page.getByText(/^The quote expired\./);
+    await expect(guidance).toContainText("For a new purchase, sign out and sign in again");
+    await expect(guidance).toContainText("Existing purchases remain available in your escrow history");
+    const close = page.getByRole("button", { name: "Check whether expired quote can be closed", exact: true });
+    if (state === "prepared" || state === "failed") {
+      await expect(guidance).toContainText("First check whether the expired funding attempt below can be closed");
+      await expect(close).toBeVisible();
+    } else {
+      await expect(guidance).not.toContainText("First");
+      await expect(close).toHaveCount(0);
+    }
+    await expect(page.getByRole("button", { name: "Prepare exact funding transaction", exact: true })).toHaveCount(0);
+    expect(calls).toEqual([]);
+    expect(await page.evaluate(() => Boolean((window as unknown as { promptOpened: boolean }).promptOpened))).toBe(false);
+  });
+}
