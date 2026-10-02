@@ -130,6 +130,8 @@ export default function CommerceClient({ network }: { network: "testnet" | "main
     nowSeconds >= Number(intent.terms.expiresAt)));
   const reviewExpired = Boolean(intent && intent.state === "quoted" &&
     (sellerQuoteExpired || nowSeconds >= intent.reviewBy));
+  const canCloseExpiredFunding = Boolean(funding && ["prepared", "failed"].includes(funding.state) &&
+    nowSeconds > funding.quoteExpiresAt);
 
   const refreshFunding = useCallback(async () => {
     if (network !== "testnet") return;
@@ -772,7 +774,7 @@ export default function CommerceClient({ network }: { network: "testnet" | "main
         Prepare exact funding transaction
       </button>}
       {fundingEnabled && intent?.state === "reviewed" && funding?.quoteIntentId !== intent.id && sellerQuoteExpired &&
-        <p>The quote expired. First close the expired funding attempt below. Then sign out and sign in again on the stream page, return here, and ask the seller for a new signed quote bound to the newly displayed session ID.</p>}
+        <p>The quote expired. {canCloseExpiredFunding && "First check whether the expired funding attempt below can be closed. "}For a new purchase, sign out and sign in again on the stream page, return here, and ask the seller for a new signed quote bound to the newly displayed session ID. Existing purchases remain available in your escrow history.</p>}
       {funding && <>
         <dl className="details">
           <div><dt>Funding state</dt><dd>{funding.state === "executed" ? "Executed; escrow verified by RPC and Mirror" :
@@ -831,7 +833,7 @@ export default function CommerceClient({ network }: { network: "testnet" | "main
         </div>}
         {funding.state === "prepared" && !fundingTx && !funding.runtimeSha256 &&
           <p className="notice">This older funding intent has no pinned deployment record. It needs operator review before any wallet action.</p>}
-        {["prepared", "failed"].includes(funding.state) && nowSeconds > funding.quoteExpiresAt && <button type="button"
+        {canCloseExpiredFunding && <button type="button"
           className="secondary" onClick={resolveExpiredFunding} disabled={fundingBusy}>
           Check whether expired quote can be closed
         </button>}
