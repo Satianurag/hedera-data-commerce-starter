@@ -26,6 +26,7 @@ import (
 	"github.com/coder/websocket"
 	hedera "github.com/hiero-ledger/hiero-sdk-go/v2/sdk"
 	"github.com/libp2p/go-libp2p/core/crypto"
+	"neuron-customer-app/neuron-go/directseller"
 	"neuron-customer-app/neuron-go/legacy"
 )
 
@@ -591,9 +592,24 @@ func run() error {
 		return errors.New("legacy gateway is testnet-only until a mainnet legacy seller directory is verified")
 	}
 	sellerID := os.Getenv("NEURON_SELLER_ACCOUNT_ID")
+	direct, err := directseller.LoadFromEnv()
+	if err != nil {
+		return err
+	}
+	if direct != nil {
+		if direct.AccountID != sellerID {
+			return errors.New("gateway seller differs from direct profile")
+		}
+		if err := directseller.CheckMirror(context.Background(), *direct); err != nil {
+			return err
+		}
+	}
 	sellerKey, err := getSellerPublicKey(sellerID)
 	if err != nil {
 		return err
+	}
+	if direct != nil && sellerKey != direct.PublicKey {
+		return errors.New("gateway seller key differs from direct profile")
 	}
 	keyPath := os.Getenv("HEDERA_BUYER_KEY_FILE")
 	keyInfo, err := os.Stat(keyPath)
@@ -623,6 +639,9 @@ func run() error {
 	}
 	parsedHost := net.ParseIP(hostName)
 	loopback := hostName == "localhost" || (parsedHost != nil && parsedHost.IsLoopback())
+	if direct != nil && direct.Transport == "loopback" && !loopback {
+		return errors.New("loopback seller profile requires a loopback gateway listener")
+	}
 	cert, keyCert := os.Getenv("NEURON_TLS_CERT_FILE"), os.Getenv("NEURON_TLS_KEY_FILE")
 	if !loopback && (cert == "" || keyCert == "") {
 		return errors.New("non-loopback gateway listener requires TLS certificate and key")
@@ -681,7 +700,11 @@ func run() error {
 		}
 		defer g.journal.Close()
 	}
-	receiver, err := legacy.NewReceiver(ctx, p2pKey, sellerKey, uint16(portValue), g.onBytes)
+	newReceiver := legacy.NewReceiver
+	if direct != nil && direct.Transport == "loopback" {
+		newReceiver = legacy.NewLoopbackReceiver
+	}
+	receiver, err := newReceiver(ctx, p2pKey, sellerKey, uint16(portValue), g.onBytes)
 	if err != nil {
 		return err
 	}

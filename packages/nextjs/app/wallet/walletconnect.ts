@@ -1,146 +1,173 @@
 "use client";
 
 import { registerWalletConnect, removeWalletConnect, type WalletProvider } from "./injected";
+import { approvedTestnetAccount, testnetWalletAdapter } from "./walletconnect-session";
+import { closeWalletConnectProvider, stopWalletConnectCore } from "./walletconnect-lifecycle";
+import type UniversalProvider from "@walletconnect/universal-provider";
 
 type WalletConnectConfig = { projectId: string; origin: string; chainId: 296; rpcUrl: string };
-type ConnectedProvider = WalletProvider & {
-  connect(): Promise<unknown>;
-  disconnect(): Promise<void>;
-  session?: unknown;
-  on(event: "session_update" | "session_delete" | "disconnect", listener: (...args: unknown[]) => void): void;
-};
-
-let connected: ConnectedProvider | null = null;
-let connectedProjectId: string | null = null;
+type Connection = { raw: UniversalProvider; wallet: WalletProvider; projectId: string; invalidate(): void };
+let connected: Connection | null = null;
 let opening = false;
+let pendingAttempt: Promise<void> | null = null;
+let providerPromise: Promise<UniversalProvider> | null = null;
+let providerProjectId: string | null = null;
+let ownedCore: UniversalProvider["client"]["core"] | null = null;
+let closing: Promise<void> | null = null;
+let stopped = false;
+let unusable = false;
 
-export async function walletConnectConfig(): Promise<WalletConnectConfig | null> {
-  const response = await fetch("/api/walletconnect", { cache: "no-store", credentials: "same-origin" });
+function checkConfig(config: WalletConnectConfig): void {
+  if (!/^[0-9a-f]{32}$/i.test(config.projectId) || config.origin !== window.location.origin || config.chainId !== 296 ||
+      config.rpcUrl !== "https://testnet.hashio.io/api") {
+    throw new Error("WalletConnect origin or Hedera testnet configuration does not match this page");
+  }
+}
+
+export async function walletConnectConfig(signal?: AbortSignal): Promise<WalletConnectConfig | null> {
+  const timeout = AbortSignal.timeout(10_000);
+  const response = await fetch("/api/walletconnect", { cache: "no-store", credentials: "same-origin",
+    signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
   if (response.status === 404) return null;
   if (!response.ok) throw new Error("WalletConnect configuration is unavailable");
   const value: unknown = await response.json();
   if (!value || typeof value !== "object") throw new Error("WalletConnect configuration is invalid");
-  const config = value as Partial<WalletConnectConfig>;
-  if (!config.projectId || !/^[0-9a-f]{32}$/i.test(config.projectId) ||
-      config.origin !== window.location.origin || config.chainId !== 296 ||
-      config.rpcUrl !== "https://testnet.hashio.io/api") {
-    throw new Error("WalletConnect origin or Hedera testnet configuration does not match this page");
+  checkConfig(value as WalletConnectConfig);
+  return value as WalletConnectConfig;
+}
+
+function closeProvider(provider: UniversalProvider): Promise<void> {
+  stopped = true;
+  provider.client.core.heartbeat.stop();
+  if (closing) return closing;
+  const result = closeWalletConnectProvider(provider).then(clean => { if (!clean) unusable = true; })
+    .catch(() => { unusable = true; }).finally(() => { if (closing === result) closing = null; });
+  closing = result;
+  return result;
+}
+
+function pageProvider(config: WalletConnectConfig): Promise<UniversalProvider> {
+  if (providerProjectId && providerProjectId !== config.projectId) throw new Error("WalletConnect project changed; reload this page");
+  if (!providerPromise) {
+    providerProjectId = config.projectId;
+    providerPromise = (async () => {
+      const [{ UniversalProvider }, { Core }] = await Promise.all([
+        import("@walletconnect/universal-provider"), import("@walletconnect/core"),
+      ]);
+      if (stopped) { unusable = true; throw new Error("WalletConnect initialization was cancelled; reload this page before reconnecting"); }
+      // One Core per page bounds the SDK's retained globals and browser listeners.
+      // A new page gets fresh storage; an unsettled attempt cannot start another.
+      const customStoragePrefix = `neuron-${crypto.randomUUID()}`;
+      ownedCore = new Core({ projectId: config.projectId, logger: "error", customStoragePrefix });
+      try {
+        return await UniversalProvider.init({ core: ownedCore, projectId: config.projectId, logger: "error", customStoragePrefix,
+          metadata: { name: "Neuron customer app", description: "Hedera testnet service discovery and review", url: config.origin, icons: [] } });
+      } catch (error) {
+        unusable = true;
+        await stopWalletConnectCore(ownedCore);
+        throw error;
+      }
+    })();
   }
-  return config as WalletConnectConfig;
+  return providerPromise;
 }
 
-function testnetAccount(accounts: unknown, chain: unknown): boolean {
-  return typeof chain === "string" && /^0x[0-9a-f]+$/i.test(chain) && BigInt(chain) === 296n &&
-    Array.isArray(accounts) && accounts.length > 0 &&
-    typeof accounts[0] === "string" && /^0x[0-9a-f]{40}$/i.test(accounts[0]);
-}
-
-function approvedTestnetSession(session: unknown, address: string): boolean {
-  if (!session || typeof session !== "object") return false;
-  const namespaces = (session as { namespaces?: unknown }).namespaces;
-  if (!namespaces || typeof namespaces !== "object") return false;
-  return Object.values(namespaces).some(namespace => {
-    if (!namespace || typeof namespace !== "object") return false;
-    const { accounts, methods } = namespace as { accounts?: unknown; methods?: unknown };
-    return Array.isArray(accounts) && Array.isArray(methods) &&
-      accounts.some(account => typeof account === "string" &&
-        account.toLowerCase() === `eip155:296:${address.toLowerCase()}`) &&
-      methods.includes("personal_sign") && methods.includes("eth_sendTransaction");
-  });
-}
-
-export async function connectWalletConnect(config: WalletConnectConfig): Promise<void> {
+export async function connectWalletConnect(config: WalletConnectConfig,
+    displayUri: (uri: string | null) => void = () => {}, signal?: AbortSignal): Promise<void> {
   if (opening) throw new Error("A wallet connection is already opening");
-  if (config.origin !== window.location.origin || config.chainId !== 296 ||
-      config.rpcUrl !== "https://testnet.hashio.io/api") {
-    throw new Error("WalletConnect is available only on the configured Hedera testnet origin");
+  if (pendingAttempt || closing) throw new Error("The previous WalletConnect attempt is still settling; wait or reload this page");
+  if (unusable) throw new Error("WalletConnect could not finish cleanup; reload this page before connecting again");
+  checkConfig(config);
+  if (signal?.aborted) throw new Error("WalletConnect connection cancelled");
+  if (connected) {
+    const current = connected;
+    try {
+      if (current.projectId !== config.projectId) throw new Error("WalletConnect project changed; connect again");
+      await current.wallet.request({ method: "eth_accounts" });
+      if (connected !== current || signal?.aborted) throw new Error("WalletConnect connection changed or was cancelled");
+      registerWalletConnect(current.wallet);
+      return;
+    } catch (error) { current.invalidate(); void closeProvider(current.raw); throw error; }
   }
   opening = true;
-  let provider: ConnectedProvider | null = null;
-  try {
-    if (connected) {
-      if (connectedProjectId !== config.projectId) {
-        const stale = connected;
-        connected = null;
-        connectedProjectId = null;
-        removeWalletConnect(stale);
-        try { await stale.disconnect(); } catch { /* Stale selection is already removed. */ }
-        throw new Error("WalletConnect project changed. Connect again.");
-      }
-      const [accounts, chain] = await Promise.all([
-        connected.request({ method: "eth_accounts" }), connected.request({ method: "eth_chainId" }),
-      ]);
-      if (!testnetAccount(accounts, chain) ||
-          !approvedTestnetSession(connected.session, (accounts as string[])[0])) {
-        const stale = connected;
-        connected = null;
-        connectedProjectId = null;
-        removeWalletConnect(stale);
-        try { await stale.disconnect(); } catch { /* Stale selection is already removed. */ }
-        throw new Error("WalletConnect session is no longer on Hedera testnet. Connect again.");
-      }
-      registerWalletConnect(connected);
-      return;
+  let raw: UniversalProvider | null = null;
+  let cancelled = false;
+  let rejectCancellation: (error: Error) => void = () => {};
+  const cancellation = new Promise<never>((_, reject) => { rejectCancellation = reject; });
+  const cancel = (message: string) => {
+    cancelled = true;
+    stopped = true;
+    rejectCancellation(new Error(message));
+    if (connected?.raw === raw) connected?.invalidate();
+    if (raw) void closeProvider(raw);
+    else if (ownedCore) { stopped = true; void stopWalletConnectCore(ownedCore); }
+  };
+  const abort = () => cancel("WalletConnect connection cancelled");
+  signal?.addEventListener("abort", abort, { once: true });
+  const timer = setTimeout(() => cancel("WalletConnect connection timed out; try connecting again"), 120_000);
+  const attempt = (async () => {
+    raw = await pageProvider(config);
+    const provider = raw;
+    if (cancelled) { await closeProvider(provider); return; }
+    if (stopped) {
+      if (provider.session || provider.client.session.length || unusable) throw new Error("WalletConnect cleanup is incomplete; reload this page");
+      stopped = false;
+      await provider.client.core.heartbeat.init();
+      try { await provider.client.core.relayer.transportOpen(); }
+      catch (error) { await closeProvider(provider); throw error; }
+      if (cancelled) { await closeProvider(provider); return; }
     }
-    const { EthereumProvider } = await import("@walletconnect/ethereum-provider");
-    provider = await EthereumProvider.init({
-      projectId: config.projectId,
-      metadata: { name: "Neuron customer app", description: "Hedera testnet service discovery and review",
-        url: config.origin, icons: [] },
-      optionalChains: [296], rpcMap: { 296: config.rpcUrl }, showQrModal: true,
-    }) as ConnectedProvider;
-    await provider.connect();
-    const [accounts, chain] = await Promise.all([
-      provider.request({ method: "eth_accounts" }), provider.request({ method: "eth_chainId" }),
-    ]);
-    if (!testnetAccount(accounts, chain) ||
-        !approvedTestnetSession(provider.session, (accounts as string[])[0])) {
-      throw new Error("WalletConnect did not approve a Hedera testnet EVM account");
-    }
-    // A proposal may resolve just before a wallet emits an account or chain change.
-    const [settledAccounts, settledChain] = await Promise.all([
-      provider.request({ method: "eth_accounts" }), provider.request({ method: "eth_chainId" }),
-    ]);
-    if (!testnetAccount(settledAccounts, settledChain) ||
-        (settledAccounts as string[])[0].toLowerCase() !== (accounts as string[])[0].toLowerCase()) {
-      throw new Error("WalletConnect account or chain changed while connecting");
-    }
-    const active = provider;
+    let valid = true;
+    let wallet: WalletProvider | null = null;
     const invalidate = () => {
-      removeWalletConnect(active);
-      if (connected === active) {
-        connected = null;
-        connectedProjectId = null;
-      }
+      valid = false;
+      if (wallet) removeWalletConnect(wallet);
+      if (wallet && connected?.wallet === wallet) connected = null;
+      for (const event of ["accountsChanged", "chainChanged", "session_update", "session_delete", "disconnect"]) provider.removeListener(event, changed);
     };
-    const invalidateAndDisconnect = () => {
+    const changed = () => { if (valid) { invalidate(); void closeProvider(provider); } };
+    for (const event of ["accountsChanged", "chainChanged", "session_update", "session_delete", "disconnect"]) provider.on(event, changed);
+    const onUri = (uri: unknown) => {
+      if (cancelled) { void closeProvider(provider); return; }
+      if (typeof uri !== "string" || uri.length > 4096 || !/^wc:[0-9a-f]{64}@2\?/.test(uri)) {
+        cancel("WalletConnect returned an invalid pairing URI"); return;
+      }
+      displayUri(uri);
+    };
+    provider.on("display_uri", onUri);
+    try {
+      await provider.connect({ optionalNamespaces: { eip155: {
+        chains: ["eip155:296"], methods: ["personal_sign", "eth_sendTransaction"],
+        events: ["accountsChanged", "chainChanged"], rpcMap: { "296": config.rpcUrl },
+      } } });
+      if (cancelled || !valid) throw new Error("WalletConnect changed or was cancelled while connecting");
+      approvedTestnetAccount(provider.session);
+      wallet = testnetWalletAdapter(provider, () => valid && !cancelled);
+      const account = await wallet.request({ method: "eth_accounts" });
+      if (!valid || cancelled || !Array.isArray(account) || account[0] !== approvedTestnetAccount(provider.session)) {
+        throw new Error("WalletConnect session changed while connecting");
+      }
+      connected = { raw: provider, wallet, projectId: config.projectId, invalidate };
+      registerWalletConnect(wallet);
+    } catch (error) {
       invalidate();
-      void active.disconnect().catch(() => { /* The wallet was already removed from app selection. */ });
-    };
-    provider.on("disconnect", invalidate);
-    provider.on("session_delete", invalidateAndDisconnect);
-    provider.on("session_update", invalidateAndDisconnect);
-    connected = provider;
-    connectedProjectId = config.projectId;
-    registerWalletConnect(provider);
-  } catch (error) {
-    if (provider) {
-      if (connected === provider) {
-        connected = null;
-        connectedProjectId = null;
-      }
-      removeWalletConnect(provider);
-      try { await provider.disconnect(); } catch { /* A failed connection remains unselected. */ }
+      await closeProvider(provider);
+      // A late approval can arrive while the first cancellation cleanup runs.
+      if (provider.session) await closeProvider(provider);
+      throw error;
     }
-    throw error;
-  } finally { opening = false; }
+    finally { provider.removeListener("display_uri", onUri); }
+  })();
+  pendingAttempt = attempt;
+  void attempt.finally(() => { if (pendingAttempt === attempt) pendingAttempt = null; }).catch(() => {});
+  try { await Promise.race([attempt, cancellation]); }
+  finally { clearTimeout(timer); signal?.removeEventListener("abort", abort); displayUri(null); opening = false; }
 }
 
 export async function disconnectWalletConnect(): Promise<void> {
-  const provider = connected;
-  if (!provider) return;
-  connected = null;
-  connectedProjectId = null;
-  removeWalletConnect(provider);
-  await provider.disconnect();
+  const connection = connected;
+  if (!connection) return;
+  connection.invalidate();
+  await closeProvider(connection.raw);
+  if (unusable || connection.raw.session) throw new Error("WalletConnect selection removed; wallet disconnection timed out. Reload this page before reconnecting");
 }

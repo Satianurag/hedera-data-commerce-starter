@@ -108,6 +108,12 @@ test("new funding stays closed without approval while buyer recovery routes rema
     assert.equal((await post(app.origin, "/api/customer-funding", cookie,
       { action: "openWallet", fundingId: "b".repeat(32) })).status, 404);
     assert.equal((await post(app.origin, "/api/customer-funding", cookie,
+      { action: "retryWallet", fundingId: "b".repeat(32) })).status, 400);
+    assert.equal((await post(app.origin, "/api/customer-funding", cookie,
+      { action: "retryWallet", fundingId: "b".repeat(32), acknowledged: true })).status, 404);
+    assert.equal((await post(app.origin, "/api/customer-funding", cookie,
+      { action: "retryWallet", fundingId: "b".repeat(32), acknowledged: true }, "http://wrong.example")).status, 403);
+    assert.equal((await post(app.origin, "/api/customer-funding", cookie,
       { action: "resolveExpired", fundingId: "b".repeat(32) }, "http://wrong.example")).status, 403);
 
     // A journal row can outlive its original session. Missing original runtime

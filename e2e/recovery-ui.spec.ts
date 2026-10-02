@@ -14,7 +14,7 @@ async function scenario(page: Page, kind: Kind, options: { unopened?: boolean; e
   const funding = { id: fundingId, quoteIntentId: "q", state: kind === "funding" ? "prepared" : "executed",
     contractState: kind === "funding" ? null : "funded", walletAttemptId: firstAttempt,
     walletOpenedAt: options.unopened ? null : now - 61, runtimeSha256: "a".repeat(64), abiPinned: true,
-    abandonedAt: null, transactionHash: null, reportedHash: null, observedHash: null, escrowId: "10",
+    abandonedAt: null, transactionHash: null, reportedHash: null, observedHash: null, escrowId: kind === "funding" ? null : "10",
     termsHash: `0x${"a".repeat(64)}`, contractId: "0.0.123", contractAddress: buyer, sellerAddress: buyer,
     sellerAccountId: "0.0.456", amountTinybar: "1000000", quoteExpiresAt: now + 900,
     refundAfter: kind === "approval" ? now + 900 : now - 1, preparedAt: now - 180,
@@ -81,6 +81,19 @@ async function scenario(page: Page, kind: Kind, options: { unopened?: boolean; e
 }
 
 for (const kind of ["funding", "refund", "approval"] as const) {
+  test(`${kind}: reconciled outcome clears the stale pending-wallet message (simulated)`, async ({ page }) => {
+    const { funding, record } = await scenario(page, kind);
+    const title = `${kind[0].toUpperCase()}${kind.slice(1)}`;
+    await page.getByLabel(`${title} hash from wallet history`).fill(hash);
+    await page.getByRole("button", { name: `Recover ${kind} hash`, exact: true }).click();
+    const pending = page.getByText(/Wallet returned.*Awaiting RPC/);
+    await expect(pending).toBeVisible();
+    Object.assign(kind === "funding" ? funding : record, { state: "executed" });
+    await page.getByRole("button", { name: kind === "funding" ? "Check chain outcome" :
+      kind === "refund" ? "Check refund outcome" : "Check approval outcome", exact: true }).click();
+    await expect(pending).toHaveCount(0);
+  });
+
   test(`${kind}: manual lost-hash recovery binds the durable opening without another wallet send (simulated)`, async ({ page }) => {
     const { calls } = await scenario(page, kind);
     const title = `${kind[0].toUpperCase()}${kind.slice(1)}`;
@@ -93,10 +106,12 @@ for (const kind of ["funding", "refund", "approval"] as const) {
   });
 }
 
-for (const kind of ["refund", "approval"] as const) {
+for (const kind of ["funding", "refund", "approval"] as const) {
   test(`${kind}: guarded repeated rejection persists each opening and locks history while prompting (simulated)`, async ({ page }) => {
-    const { record } = await scenario(page, kind);
-    const button = page.getByRole("button", { name: kind === "refund" ? "Reconcile and retry refund in wallet" :
+    const fixture = await scenario(page, kind);
+    const record = kind === "funding" ? fixture.funding : fixture.record;
+    const button = page.getByRole("button", { name: kind === "funding" ? "Recheck and retry funding wallet" :
+      kind === "refund" ? "Reconcile and retry refund in wallet" :
       "Recheck and approve seller withdrawal in wallet", exact: true });
     for (let attempt = 0; attempt < 2; attempt++) {
       await page.getByRole("checkbox").check();
@@ -114,13 +129,15 @@ for (const kind of ["refund", "approval"] as const) {
   });
 }
 
-test("expired browser authentication refuses to open another refund prompt (simulated)", async ({ page }) => {
-  const { calls } = await scenario(page, "refund", { expired: true });
-  await page.getByRole("checkbox").check();
-  await page.getByRole("button", { name: "Reconcile and retry refund in wallet" }).click();
-  await expect(page.getByText("Sign in again with the original buyer wallet", { exact: true })).toBeVisible();
-  expect(calls).toEqual([]);
-});
+for (const kind of ["funding", "refund"] as const) {
+  test(`expired browser authentication refuses to open another ${kind} prompt (simulated)`, async ({ page }) => {
+    const { calls } = await scenario(page, kind, { expired: true });
+    await page.getByRole("checkbox").check();
+    await page.getByRole("button", { name: kind === "funding" ? "Recheck and retry funding wallet" : "Reconcile and retry refund in wallet" }).click();
+    await expect(page.getByText(/^Sign in again with the original buyer wallet(?:\.|$)/)).toBeVisible();
+    expect(calls).toEqual([]);
+  });
+}
 
 test("a slow earlier funding response cannot replace the newly selected escrow (simulated)", async ({ page }) => {
   const { funding, other } = await scenario(page, "funding");

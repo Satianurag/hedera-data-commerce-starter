@@ -1,9 +1,11 @@
+import { loadDirectSellerProfile } from "@neuron/hedera/direct-seller-file";
 import { createHmac, randomBytes } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
 import { dirname, isAbsolute } from "node:path";
 import { customerAuthOrigin, customerToken, getCustomerSession } from "../../../lib/customer-auth";
 import type { CustomerSession } from "../../../lib/customer-auth";
 import { gatewayServerEndpoint } from "../../../lib/gateway-endpoint";
+import { checkDirectSellerBinding, networkConfigFromEnv } from "@neuron/hedera";
 
 export const runtime = "nodejs";
 
@@ -72,6 +74,8 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: "Gateway URL is invalid" }, { status: 503 });
   }
   try {
+    const direct = loadDirectSellerProfile(process.env);
+    if (direct) await checkDirectSellerBinding(networkConfigFromEnv(process.env), direct);
     if (!isAbsolute(tokenPath)) throw new Error("Session secret path must be absolute");
     const [info, parent] = await Promise.all([lstat(tokenPath), lstat(dirname(tokenPath))]);
     if (!info.isFile() || info.isSymbolicLink() || (info.mode & 0o077) !== 0 ||
@@ -102,7 +106,8 @@ export async function POST(request: Request): Promise<Response> {
     const ticket = customerSession ?
       `auth.v2.${expiry}.${nonce}.${customerSession.sessionId}.${ownerHex}.${signature}` :
       `auth.v1.${expiry}.${nonce}.${signature}`;
-    return Response.json({ url: url.href, sellerAccount, ticket }, {
+    return Response.json({ url: url.href, sellerAccount, ticket,
+      discovery: direct ? "direct" : "canonical", transport: direct?.transport ?? "public" }, {
       headers: { "Cache-Control": "no-store" },
     });
   } catch {

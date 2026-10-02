@@ -7,7 +7,7 @@ import { InjectedWalletPicker } from "../wallet/picker";
 import { selectedInjectedWallet, subscribeWalletInvalidation, type WalletProvider } from "../wallet/injected";
 
 type Counts = { bytes: number; chunks: number; valid: number; invalid: number; aircraft: number };
-type Ticket = { url: string; sellerAccount: string; ticket: string };
+type Ticket = { url: string; sellerAccount: string; ticket: string; discovery?: "canonical" | "direct"; transport?: "public" | "loopback" };
 type CustomerSession = { sessionId: string; ownerAddress: string; expiresAt: number };
 type SellerRequest = { id: string; state: "reserved" | "submitting" | "uncertain" | "confirmed";
   sellerAccount: string; transactionId: string | null; payloadSha256: string | null; topicSequence: number | null };
@@ -85,6 +85,8 @@ export default function SessionsPage() {
   const [view, setView] = useState<Counts>(emptyCounts);
   const [status, setStatus] = useState("Stopped");
   const [seller, setSeller] = useState<string | null>(null);
+  const [directDiscovery, setDirectDiscovery] = useState(false);
+  const [loopbackTransport, setLoopbackTransport] = useState(false);
   const [auth, setAuth] = useState<"checking" | "disabled" | "required" | "signedIn" | "unavailable">("checking");
   const [authSession, setAuthSession] = useState<CustomerSession | null>(null);
   const [authMessage, setAuthMessage] = useState("");
@@ -376,6 +378,8 @@ export default function SessionsPage() {
       socket.binaryType = "arraybuffer";
       connection.current = socket;
       setSeller(ticket.sellerAccount);
+      setDirectDiscovery(ticket.discovery === "direct");
+      setLoopbackTransport(ticket.transport === "loopback");
       setStatus("Connecting to seller stream");
       socket.onopen = () => {
         if (current === generation.current) {
@@ -471,6 +475,8 @@ export default function SessionsPage() {
     </p>}
     <p role="status" aria-live="polite">Status: {status}</p>
     {seller && <p>Legacy seller account: <span className="mono">{seller}</span></p>}
+    {seller && directDiscovery && <p>Discovery: operator-pinned direct seller profile, checked against Hedera Mirror.
+      {loopbackTransport ? " Transport is confined to this machine." : " Transport uses the configured public QUIC endpoint."}</p>}
     <dl className="details">
       <div><dt>Raw bytes</dt><dd>{view.bytes.toLocaleString()}</dd></div>
       <div><dt>Binary messages</dt><dd>{view.chunks.toLocaleString()}</dd></div>

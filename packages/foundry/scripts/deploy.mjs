@@ -1,27 +1,21 @@
-import assert from "node:assert/strict";
-import { createHash, createPrivateKey } from "node:crypto";
+import { createPrivateKey } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import { dirname, isAbsolute } from "node:path";
+import { fileURLToPath } from "node:url";
 import { ethers } from "ethers";
+import { deployWithJournal } from "./deployment-journal.mjs";
 
-const networks = {
-  testnet: { chainId: 296n, mirror: "https://testnet.mirrornode.hedera.com", rpc: "https://testnet.hashio.io/api" },
-  mainnet: { chainId: 295n, mirror: "https://mainnet.mirrornode.hedera.com" },
-};
+const network = { chainId: 296n, mirror: "https://testnet.mirrornode.hedera.com", rpc: "https://testnet.hashio.io/api" };
 
-function rpcUrl(name, network) {
+function rpcUrl() {
   const configured = process.env.HEDERA_RPC_URL;
-  if (!configured && name === "mainnet") {
-    throw new Error("mainnet deployment requires an explicit production HEDERA_RPC_URL");
-  }
   const value = configured ?? network.rpc;
   let url;
   try { url = new URL(value); } catch { throw new Error("HEDERA_RPC_URL is invalid"); }
   if (url.protocol !== "https:" || !url.hostname || url.username || url.password || url.hash || url.search ||
       url.hostname === "localhost" || url.hostname.endsWith(".local") ||
-      isIP(url.hostname.replace(/^\[|\]$/g, "")) !== 0 ||
-      (name === "mainnet" && url.hostname === "mainnet.hashio.io")) {
+      isIP(url.hostname.replace(/^\[|\]$/g, "")) !== 0) {
     throw new Error("HEDERA_RPC_URL must be a public HTTPS provider for the selected network");
   }
   return url.href;
@@ -40,15 +34,11 @@ async function mirrorJson(url) {
 }
 
 async function main() {
-  const name = process.env.HEDERA_NETWORK;
-  const network = networks[name];
-  if (!network) throw new Error("HEDERA_NETWORK must be explicitly set to testnet or mainnet");
-  if (name === "mainnet" && process.env.HEDERA_ALLOW_MAINNET_WRITES !== "true") {
-    throw new Error("mainnet writes require HEDERA_ALLOW_MAINNET_WRITES=true");
-  }
+  if (process.env.HEDERA_NETWORK !== "testnet") throw new Error("Deployment is testnet-only; mainnet writes require a separate release");
   const accountId = process.env.HEDERA_OPERATOR_ACCOUNT_ID;
   if (!/^\d+\.\d+\.\d+$/.test(accountId ?? "")) throw new Error("HEDERA_OPERATOR_ACCOUNT_ID must be numeric");
   const maxFee = positiveEnv("HEDERA_MAX_FEE_TINYBAR") * 10_000_000_000n;
+  if (maxFee > 100_000_000n * 10_000_000_000n) throw new Error("Deployment fee cap exceeds 1 HBAR");
   const gasLimit = positiveEnv("HEDERA_CONTRACT_GAS");
   if (gasLimit > 2_000_000n) throw new Error("HEDERA_CONTRACT_GAS exceeds 2000000");
   const keyPath = process.env.HEDERA_OPERATOR_KEY_FILE;
@@ -77,7 +67,8 @@ async function main() {
     throw new Error("operator key/account/EVM address mismatch on selected network");
   }
 
-  const provider = new ethers.JsonRpcProvider(rpcUrl(name, network));
+  const selectedRpc = rpcUrl();
+  const provider = new ethers.JsonRpcProvider(selectedRpc);
   if ((await provider.getNetwork()).chainId !== network.chainId) throw new Error("RPC chain ID mismatch");
   const artifact = JSON.parse(await readFile(new URL("../out/BuyerEscrow.sol/BuyerEscrow.json", import.meta.url), "utf8"));
   const bytecode = artifact.bytecode?.object;
@@ -85,34 +76,24 @@ async function main() {
   if (!/^0x(?:[0-9a-fA-F]{2})+$/.test(bytecode) || !/^0x(?:[0-9a-fA-F]{2})+$/.test(runtime)) {
     throw new Error("invalid compiled BuyerEscrow artifact");
   }
-  const gasPrice = BigInt(await provider.send("eth_gasPrice", []));
-  if (gasPrice * gasLimit > maxFee) throw new Error("deployment gas budget exceeds HEDERA_MAX_FEE_TINYBAR");
-  const transaction = await wallet.connect(provider).sendTransaction({ data: bytecode, gasLimit, gasPrice });
-  console.error(`submitted ${transaction.hash}; awaiting receipt`);
-  const receipt = await provider.waitForTransaction(transaction.hash, 1, 90_000);
-  if (!receipt || receipt.status !== 1 || !receipt.contractAddress) {
-    throw new Error(`deployment ${transaction.hash} has no successful receipt`);
-  }
-  const code = await provider.getCode(receipt.contractAddress);
-  assert.equal(code.toLowerCase(), runtime.toLowerCase(), "deployed runtime bytecode differs from build artifact");
-  let contract;
-  for (let attempt = 0; attempt < 30; attempt++) {
-    try {
-      contract = await mirrorJson(`${network.mirror}/api/v1/contracts/${receipt.contractAddress}`);
-      if (contract.deleted === false && contract.contract_id && contract.evm_address?.toLowerCase() === receipt.contractAddress.toLowerCase()) break;
-    } catch { /* Mirror indexing may lag consensus. */ }
-    await new Promise(resolve => setTimeout(resolve, 2_000));
-  }
-  if (!contract?.contract_id || contract.deleted !== false || contract.evm_address?.toLowerCase() !== receipt.contractAddress.toLowerCase()) {
-    throw new Error(`contract ${transaction.hash} confirmed by RPC but not by Mirror within 60 seconds`);
-  }
-  console.log(JSON.stringify({
-    network: name,
-    contractId: contract.contract_id,
-    evmAddress: receipt.contractAddress,
-    transactionHash: transaction.hash,
-    runtimeSha256: createHash("sha256").update(Buffer.from(runtime.slice(2), "hex")).digest("hex"),
-  }));
+  try {
+    const result = await deployWithJournal({ journalFile: process.env.HEDERA_DEPLOYMENT_JOURNAL_FILE,
+      checkoutRoot: fileURLToPath(new URL("../../..", import.meta.url)), wallet, provider, accountId,
+      rpcUrl: selectedRpc, bytecode, runtime, gasLimit, maxFeeWei: maxFee,
+      onStatus: message => console.error(message),
+      confirmMirror: async address => {
+        for (let attempt = 0; attempt < 30; attempt++) {
+          try {
+            const contract = await mirrorJson(`${network.mirror}/api/v1/contracts/${address}`);
+            if (contract.deleted === false && contract.contract_id && contract.evm_address?.toLowerCase() === address.toLowerCase()) return contract;
+          } catch { /* Mirror indexing may lag consensus; no new deployment. */ }
+          await new Promise(resolve => setTimeout(resolve, 2_000));
+        }
+        throw new Error("RPC deployment is confirmed but Mirror indexing is delayed. Resume the same deployment journal");
+      },
+    });
+    console.log(JSON.stringify(result));
+  } finally { provider.destroy(); }
 }
 
 main().catch(error => {

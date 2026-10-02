@@ -17,10 +17,10 @@ The default app is **read-only and needs no account, wallet or secret**. It show
 
 Prerequisites:
 
-- **Node 20.18.3 or later**. Node 22.23.3 (`.nvmrc`) is the tested version.
+- **Node 22.23.3 or Node 24.21.0 LTS (and later patch releases in those majors)**. `.nvmrc` selects Node 22.23.3.
 - **Git**.
 - **Foundry** (`forge`). The CLI checks for it before scaffolding; see below if you do not have it.
-- **Go 1.26.8**, only for the optional server adapters and the HCS submit command.
+- **Go 1.27.1**, only for the optional server adapters and the HCS submit command.
 
 Linux and macOS are supported. On Windows, use WSL2.
 
@@ -65,7 +65,7 @@ Every variable, with recovery steps, is in the [configuration guide](docs/config
 | HCS evidence viewer | Topic metadata, exact bytes, bounded chunk reassembly, payer and signed-envelope checks | Works by default on either network |
 | Binary data consumer | QUIC → authenticated WebSocket → browser, Mode-S decoding, stale and disconnected states | [Legacy gateway](docs/configuration.md#legacy-streaming) |
 | Paid document service | Signed negotiation, real file transport, exact ERC20 allowance and deposit, buyer approval, seller payment, timeout refund | [Reference adapter](packages/neuron-reference/README.md) |
-| Native-HBAR escrow | Foundry contract plus a separately gated signed-quote flow | [Native-HBAR setup](docs/configuration.md#native-hbar-extension) |
+| Native-HBAR escrow | Signed quotes, an owned seller, authenticated transport and separately gated escrow funding/approval | [Native seller setup](docs/native-seller.md) |
 
 These are separate protocol adapters. A legacy aviation seller does not automatically accept the reference ERC20 invoice or this template's native-HBAR quote. This is an independent integration, not endorsed by Neuron.
 
@@ -124,7 +124,8 @@ Every row is a real testnet operation you can check on the official Mirror Node.
 | Operation | Evidence |
 | --- | --- |
 | HCS message submitted by `hcs:submit` from a fresh scaffold | [Transaction `0.0.10725146@1790499070.059923854`](https://testnet.mirrornode.hedera.com/api/v1/transactions/0.0.10725146-1790499070-059923854) · [topic 0.0.10725147 message 13](https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10725147/messages/13) |
-| `BuyerEscrow` deployed on Hedera EVM | [Contract 0.0.10730636](https://testnet.mirrornode.hedera.com/api/v1/contracts/0.0.10730636) |
+| Current Solidity 0.8.37 `BuyerEscrow` deployed on Hedera EVM | [Contract 0.0.10828632](https://testnet.mirrornode.hedera.com/api/v1/contracts/0.0.10828632) |
+| Native-HBAR purchase with an owned seller: real HCS, public QUIC, MetaMask approval and exact 0.001 HBAR payout | [Seller withdrawal](https://testnet.mirrornode.hedera.com/api/v1/contracts/results/0x2f8871e967420d5f7f2a50124fecbd04dbcf2f586c1f86dd61549770da0f9f06) · [flow and boundaries](docs/verification.md#native-hbar-purchase-with-an-owned-seller) |
 | Paid document purchase in MetaMask: seller withdrawal | [Contract result](https://testnet.mirrornode.hedera.com/api/v1/contracts/results/0x5031eaa0b3a132705b61cf62f9630e46543514d17eea2feb79eb7b3298526196) |
 
 The [verification guide](docs/verification.md) lists the full purchase and refund receipts and how to reproduce every check.
@@ -132,7 +133,7 @@ The [verification guide](docs/verification.md) lists the full purchase and refun
 ## Limits
 
 - Mainnet is read-only. Mainnet writes are a [separate release](docs/mainnet.md).
-- The native-HBAR browser checkout and wallets other than MetaMask have not been tested end to end.
+- The owned-seller direct native-HBAR flow is tested end to end with MetaMask. Hosted-directory enrollment, uncontrolled third-party sellers and live WalletConnect/mobile pairing remain separate verification boundaries.
 - The reference adapter builds upstream Neuron source in a local cache and does not redistribute it. Read its [compatibility and licensing notes](packages/neuron-reference/README.md#exact-compatibility-target) before you distribute a build.
 - The app keeps customer state in SQLite, so it runs as a single long-lived server, not on serverless hosting. See [Linux deployment](deploy/testnet/README.md).
 

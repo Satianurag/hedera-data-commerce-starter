@@ -92,12 +92,14 @@ async function fixture() {
    else if(method==='eth_estimateGas')result='0x186a0';
    else if(method==='eth_call') {
     const decoded = iface.parseTransaction({data:params[0].data});
-    result=decoded.name==='usedTermsHash'?iface.encodeFunctionResult('usedTermsHash',[chain.used]):iface.encodeFunctionResult('escrows',[buyer,seller,100,now-1200,now-600,termsHash,chain.state]);
+    const terms=chain.fundingTerms ?? {expiresAt:now-1200,refundAfter:now-600,termsHash};
+    result=decoded.name==='usedTermsHash'?iface.encodeFunctionResult('usedTermsHash',[chain.used]):iface.encodeFunctionResult('escrows',[buyer,seller,100,terms.expiresAt,terms.refundAfter,terms.termsHash,chain.state]);
    } else if(method==='eth_getTransactionByHash')result={...(params[0]===fundingHash?fundingTx:refundTx),input:(params[0]===fundingHash?fundingTx:refundTx).data,hash:params[0]};
    else if(method==='eth_getTransactionReceipt') {
     result={status:params[0]===chain.failHash?'0x0':'0x1',transactionHash:params[0],logs:[]};
     if(params[0]===fundingHash&&chain.failHash!==fundingHash) {
-      const encoded=iface.encodeEventLog(iface.getEvent('Funded'),[1,buyer,seller,100,now-1200,now-600,termsHash]);
+      const terms=chain.fundingTerms ?? {expiresAt:now-1200,refundAfter:now-600,termsHash};
+      const encoded=iface.encodeEventLog(iface.getEvent('Funded'),[1,buyer,seller,100,terms.expiresAt,terms.refundAfter,terms.termsHash]);
       result.logs=[{address:contract,...encoded}];
     } else if(params[0]!==chain.failHash) {
       const encoded=iface.encodeEventLog(iface.getEvent('Refunded'),[1,buyer,buyer,100]);
@@ -111,7 +113,7 @@ async function fixture() {
   throw Error('Unexpected network request '+url);
  };
  Object.assign(process.env,{HEDERA_NETWORK:'testnet',HEDERA_RPC_URL:'https://testnet.hashio.io/api',NEURON_ENABLE_CUSTOMER_APPROVAL:'true',NEURON_ESCROW_RUNTIME_SHA256:runtimeHash,NEURON_COMMERCE_MAX_TX_FEE_TINYBAR:'100000000'});
- return {api,db,databasePath,chain,seedRefund,cleanup:()=>{global.fetch=savedFetch;db.close();fs.rmSync(directory,{recursive:true,force:true});}};
+ return {api,db,databasePath,chain,seedRefund,verified,fundingTx,cleanup:()=>{global.fetch=savedFetch;db.close();fs.rmSync(directory,{recursive:true,force:true});}};
 }
 async function rejects409(action,pattern) {await assert.rejects(action,error=>error.status===409&&pattern.test(error.message));}
 
@@ -437,4 +439,120 @@ test('approval consumed-nonce proof recovers cancellation and refuses already ap
    }
   }finally{f.cleanup();}
  }
+});
+
+function rejectedFunding(f) {
+ const {terms}=f.verified;
+ const transaction={from:buyer,to:contract,value:'0xe8d4a51000',
+  data:iface.encodeFunctionData('fund',[seller,terms.expiresAt,terms.refundAfter,f.verified.termsHash]),
+  gas:'0x1fbd0',gasPrice:'0x1',chainId:'0x128',nonce:'0x4'};
+ Object.assign(f.fundingTx,transaction);
+ f.chain.fundingTerms={expiresAt:Number(terms.expiresAt),refundAfter:Number(terms.refundAfter),termsHash:f.verified.termsHash};
+ f.db.prepare(`UPDATE customer_funding_intents SET state='prepared',transaction_hash=NULL,
+  observed_hash=NULL,confirmed_hash=NULL,wallet_opened_at=?,terms_hash=?,quote_expires_at=?,refund_after=?,
+  transaction_json=? WHERE id=?`).run(now-61,f.verified.termsHash,terms.expiresAt,terms.refundAfter,JSON.stringify(transaction),fundingId);
+ const helper=load('customer-wallet-attempts',{'./customer-commerce':{CommerceIssue}});
+ const row=f.db.prepare('SELECT * FROM customer_funding_intents WHERE id=?').get(fundingId);
+ const attemptId=f.db.transaction(()=>helper.recordWalletAttempt(f.db,'funding',row,transaction,now-61,null)).immediate();
+ f.db.prepare('UPDATE customer_funding_intents SET wallet_attempt_id=? WHERE id=?').run(attemptId,fundingId);
+ return {transaction,attemptId};
+}
+
+test('funding cancellation retry preserves the original nonce and call with a new durable opening',async()=>{
+ const f=await fixture();try{
+  const original=rejectedFunding(f);
+  const retry=await f.api.retryCustomerFundingWallet(session,origin,fundingId,true);
+  assert.equal(retry.funding.id,fundingId);
+  assert.notEqual(retry.funding.walletAttemptId,original.attemptId);
+  for(const key of ['from','to','value','data','chainId','nonce'])assert.equal(retry.transaction[key],original.transaction[key]);
+  const attempts=f.db.prepare('SELECT * FROM customer_wallet_attempts ORDER BY opened_at').all();
+  assert.equal(attempts.length,2);assert.equal(attempts[0].id,original.attemptId);
+  assert.equal(attempts[0].nonce,attempts[1].nonce);
+  await rejects409(()=>f.api.retryCustomerFundingWallet(session,origin,fundingId,true),/reconcile/);
+ }finally{f.cleanup();}
+});
+
+test('funding retry requires acknowledgement, exact original session and current quote timing',async()=>{
+ for(const scenario of ['consent','owner','origin','session','revoked','too-soon','short-quote','terms','legacy-nonce']) {
+  const f=await fixture();try{
+   rejectedFunding(f);let caller=session, callerOrigin=origin;
+   if(scenario==='owner')caller={...session,ownerAddress:seller};
+   if(scenario==='origin')callerOrigin=new URL('http://localhost:4000');
+   if(scenario==='session')caller={...session,sessionId:'2'.repeat(32)};
+   if(scenario==='revoked')f.db.prepare('UPDATE customer_sessions SET revoked_at=?').run(now);
+   if(scenario==='too-soon')f.db.prepare('UPDATE customer_funding_intents SET wallet_opened_at=?').run(now);
+   if(scenario==='short-quote')f.db.prepare('UPDATE customer_funding_intents SET quote_expires_at=?').run(now+120);
+   if(scenario==='terms')f.verified.terms.amountTinybar='101';
+   if(scenario==='legacy-nonce')f.db.prepare("UPDATE customer_funding_intents SET transaction_json=json_remove(transaction_json,'$.nonce')").run();
+   await assert.rejects(()=>f.api.retryCustomerFundingWallet(caller,callerOrigin,fundingId,scenario!=='consent'));
+   assert.equal(f.db.prepare('SELECT COUNT(*) n FROM customer_wallet_attempts').get().n,1,scenario);
+  }finally{f.cleanup();}
+ }
+});
+
+test('funding retry refuses pending, consumed or inconsistent nonces without advancing to another nonce',async()=>{
+ for(const [latest,pending] of [['0x4','0x5'],['0x5','0x5'],['0x3','0x3'],['0x5','0x4']]) {
+  const f=await fixture();try{
+   rejectedFunding(f);f.chain.nonce=latest;f.chain.pending=pending;
+   await assert.rejects(()=>f.api.retryCustomerFundingWallet(session,origin,fundingId,true),/pending|consumed|settle|disagree/);
+   assert.equal(f.db.prepare('SELECT COUNT(*) n FROM customer_wallet_attempts').get().n,1);
+  }finally{f.cleanup();}
+ }
+});
+
+test('funding retry reconciles a lost accepted response and refuses another wallet opening',async()=>{
+ const f=await fixture();try{
+  rejectedFunding(f);f.chain.failHash=null;f.chain.used=true;f.chain.nonce=f.chain.pending='0x5';
+  const t=f.chain.fundingTerms;
+  f.chain.logs=[{address:contract,transactionHash:fundingHash,...iface.encodeEventLog(iface.getEvent('Funded'),
+   [1,buyer,seller,100,t.expiresAt,t.refundAfter,t.termsHash])}];
+  await assert.rejects(()=>f.api.retryCustomerFundingWallet(session,origin,fundingId,true),/reconcile/);
+  const row=f.api.customerFundingById(session,origin,fundingId);
+  assert.equal(row.state,'executed');assert.equal(row.observedHash,fundingHash);
+  assert.equal(f.db.prepare('SELECT COUNT(*) n FROM customer_wallet_attempts').get().n,1);
+ }finally{f.cleanup();}
+});
+
+test('funding retry rejects used terms even while the funding event is delayed',async()=>{
+ const f=await fixture();try{
+  rejectedFunding(f);f.chain.used=true;
+  await assert.rejects(()=>f.api.retryCustomerFundingWallet(session,origin,fundingId,true),/already funded/);
+  assert.equal(f.db.prepare('SELECT COUNT(*) n FROM customer_wallet_attempts').get().n,1);
+ }finally{f.cleanup();}
+});
+
+test('funding retry has one concurrent winner and refuses session revocation during preflight',async()=>{
+ const f=await fixture();try{
+  rejectedFunding(f);
+  const result=await Promise.allSettled([f.api.retryCustomerFundingWallet(session,origin,fundingId,true),
+   f.api.retryCustomerFundingWallet(session,origin,fundingId,true)]);
+  assert.equal(result.filter(outcome=>outcome.status==='fulfilled').length,1);
+  assert.equal(f.db.prepare('SELECT COUNT(*) n FROM customer_wallet_attempts').get().n,2);
+  f.db.prepare('UPDATE customer_funding_intents SET wallet_opened_at=?').run(now-61);
+  f.chain.hook=async method=>{if(method==='eth_getTransactionCount')f.db.prepare('UPDATE customer_sessions SET revoked_at=?').run(now);};
+  await assert.rejects(()=>f.api.retryCustomerFundingWallet(session,origin,fundingId,true),/expired|attempted/);
+  assert.equal(f.db.prepare('SELECT COUNT(*) n FROM customer_wallet_attempts').get().n,2);
+ }finally{f.cleanup();}
+});
+
+test('late funding hash stays on its original opening and blocks retry until reconciled',async()=>{
+ const f=await fixture();try{
+  const original=rejectedFunding(f);
+  const retry=await f.api.retryCustomerFundingWallet(session,origin,fundingId,true);
+  const attached=f.api.attachCustomerFundingHash(session,origin,fundingId,fundingHash,original.attemptId);
+  assert.equal(attached.reportedHash,null);assert.equal(attached.walletAttemptId,retry.funding.walletAttemptId);
+  assert.equal(f.db.prepare('SELECT reported_hash FROM customer_wallet_attempts WHERE id=?').get(original.attemptId).reported_hash,fundingHash);
+  f.db.prepare('UPDATE customer_funding_intents SET wallet_opened_at=?').run(now-61);
+  await assert.rejects(()=>f.api.retryCustomerFundingWallet(session,origin,fundingId,true),/Earlier funding attempts/);
+  assert.equal(f.db.prepare('SELECT COUNT(*) n FROM customer_wallet_attempts').get().n,2);
+ }finally{f.cleanup();}
+});
+
+test('a prior funding callback during retry preflight prevents the new opening from committing',async()=>{
+ const f=await fixture();try{
+  const original=rejectedFunding(f);
+  f.chain.hook=async method=>{if(method==='eth_getTransactionCount')f.db.prepare('UPDATE customer_wallet_attempts SET reported_hash=? WHERE id=?').run(fundingHash,original.attemptId);};
+  await assert.rejects(()=>f.api.retryCustomerFundingWallet(session,origin,fundingId,true),/already attempted/);
+  assert.equal(f.db.prepare('SELECT COUNT(*) n FROM customer_wallet_attempts').get().n,1);
+ }finally{f.cleanup();}
 });

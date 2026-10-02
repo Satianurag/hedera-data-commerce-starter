@@ -1,3 +1,4 @@
+import { loadDirectSellerProfile } from "@neuron/hedera/direct-seller-file";
 import { currentCommerceSession, assertRefundReceiptHashes } from "./commerce-guards";
 import { walletAttemptTable, walletNonce, recordWalletAttempt, attachWalletAttempt } from "./customer-wallet-attempts";
 import { createHash, createHmac, randomBytes } from "node:crypto";
@@ -5,7 +6,7 @@ import { lstatSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute } from "node:path";
 import type Database from "better-sqlite3";
 import { Interface, computeAddress, getAddress, keccak256, zeroPadValue } from "ethers";
-import { assertEvmRpcNetwork, getMirrorAccount, getTopicMessageBySequence,
+import { assertEvmRpcNetwork, checkDirectSellerBinding, getMirrorAccount, getTopicMessageBySequence,
   inspectSignedTopicEnvelope, networkConfigFromEnv } from "@neuron/hedera";
 import { withCustomerDatabase, type CustomerSession } from "./customer-auth";
 import { CommerceIssue } from "./customer-commerce";
@@ -188,6 +189,13 @@ function fundingContext(session: CustomerSession, origin: URL, id: string): Fund
 
 async function freshSellerIdentity(funding: FundingContext): Promise<string> {
   const network = networkConfigFromEnv(process.env);
+  const direct = loadDirectSellerProfile(process.env);
+  if (direct) {
+    if (direct.accountId !== funding.seller_account || direct.quoteTopicId !== funding.quote_topic) {
+      throw new Error("Original seller quote differs from the pinned direct profile");
+    }
+    await checkDirectSellerBinding(network, direct);
+  }
   if (network.network !== "testnet" || !hederaId.test(funding.quote_topic) ||
       !Number.isSafeInteger(funding.quote_sequence) || funding.quote_sequence < 1 ||
       funding.quote_terms_hash.toLowerCase() !== funding.terms_hash.toLowerCase()) {

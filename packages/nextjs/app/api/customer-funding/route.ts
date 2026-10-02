@@ -3,7 +3,7 @@ import { customerAuthOrigin, customerToken, getCustomerSession,
 import { CommerceIssue, customerCommerceEnabled } from "../../../lib/customer-commerce";
 import { attachCustomerFundingHash, customerFundingById, customerFundingHistory, openCustomerFundingWallet,
   prepareCustomerFunding,
-  reconcileCustomerFunding, resolveExpiredCustomerFunding } from "../../../lib/customer-funding";
+  reconcileCustomerFunding, resolveExpiredCustomerFunding, retryCustomerFundingWallet } from "../../../lib/customer-funding";
 
 export const runtime = "nodejs";
 
@@ -45,8 +45,9 @@ export async function GET(request: Request): Promise<Response> {
     const fundingEnabled = newFundingEnabled(auth.origin!);
     if (!existing) return json({ funding: null, history, page, fundingEnabled });
     try {
-      return json({ funding: await reconcileCustomerFunding(auth.session!, auth.origin!, existing.id),
-        history, page, reconciliation: "current", fundingEnabled });
+      const funding = await reconcileCustomerFunding(auth.session!, auth.origin!, existing.id);
+      return json({ funding, history: customerFundingHistory(auth.session!, auth.origin!, page),
+        page, reconciliation: "current", fundingEnabled });
     } catch {
       return json({ funding: existing, history, page, reconciliation: "unavailable", fundingEnabled });
     }
@@ -81,6 +82,13 @@ export async function POST(request: Request): Promise<Response> {
         typeof body.fundingId === "string" && typeof body.transactionHash === "string" &&
         (body.walletAttemptId === undefined || typeof body.walletAttemptId === "string")) {
       return json({ funding: attachCustomerFundingHash(auth.session!, auth.origin!, body.fundingId, body.transactionHash, body.walletAttemptId as string | undefined) });
+    }
+    if (body.action === "retryWallet" && Object.keys(body).sort().join(",") === "acknowledged,action,fundingId" &&
+        typeof body.fundingId === "string" && body.acknowledged === true) {
+      if (!newFundingEnabled(auth.origin!)) {
+        return json({ error: "Funding retry requires quote review, buyer approval and funding to be enabled" }, 404);
+      }
+      return json(await retryCustomerFundingWallet(auth.session!, auth.origin!, body.fundingId, true));
     }
     if (body.action === "reconcile" && Object.keys(body).sort().join(",") === "action,fundingId" &&
         typeof body.fundingId === "string") {
