@@ -1,28 +1,25 @@
 # Neuron × Scaffold-HBAR
 
-A Scaffold-HBAR template for building Hedera apps that **discover Neuron data services, verify Hedera Consensus Service (HCS) evidence, stream binary sensor data and settle payment in escrow**. It uses **Next.js App Router, TypeScript, Foundry and Go**, with separate frontend, contract and protocol packages.
+A reusable Hedera template for discovering Neuron services, verifying HCS messages, receiving data and paying through escrow. It includes **Next.js App Router, TypeScript, Foundry and Go**, with separate frontend, contract and protocol packages.
 
-The default app is **read-only and needs no account, wallet or secret**. It shows live testnet directory records and HCS messages from the Mirror Node. Optional adapters add wallet sign-in, a live aviation data stream, a paid document service and a native-HBAR escrow contract when you are ready.
+Start with the read-only app: no wallet, account or secret is required. Add wallet sign-in, streaming or payments when your service is configured.
 
-## Hedera services used
+## Quick start
 
-| Service | Where | What it does |
-| --- | --- | --- |
-| **Consensus Service (HCS)** | `packages/neuron-hedera`, `packages/neuron-go/cmd/hcs-submit` | Reads, reassembles and verifies signed topic messages; submits new messages from a server-side signer |
-| **Smart contracts (Hedera EVM)** | `packages/foundry/src/BuyerEscrow.sol` | Native-HBAR escrow with buyer approval, seller withdrawal and deadline refund |
-| **Mirror Node REST** | `packages/neuron-hedera/src/mirror.ts` | Network-bound account, topic, message and contract-result lookups |
-| **JSON-RPC relay (chain 296)** | `packages/nextjs/lib` | Browser wallet sign-in and user-approved escrow transactions |
+Install **Node 22.23.3 or 24.21.0 LTS** (later patches in either major are supported) and Git. `.nvmrc` selects Node 22.23.3. Use Linux, macOS or WSL2 on Windows.
 
-## Create a project
+```sh
+git clone https://github.com/Satianurag/neuron-customer-app-scaffold-hbar.git neuron-app
+cd neuron-app
+npm ci --engine-strict
+npm run dev
+```
 
-Prerequisites:
+Open **http://localhost:3000**. Services reads the testnet directory; Evidence inspects HCS topics. An unavailable external service produces an unavailable state. Go **1.27.1** is needed only for the optional server adapters and HCS submission command. The project installs its pinned Foundry executable for contract builds and tests.
 
-- **Node 22.23.3 or Node 24.21.0 LTS (and later patch releases in those majors)**. `.nvmrc` selects Node 22.23.3.
-- **Git**.
-- **Foundry** (`forge`). The CLI checks for it before scaffolding; see below if you do not have it.
-- **Go 1.27.1**, only for the optional server adapters and the HCS submit command.
+### Generate with Scaffold-HBAR
 
-Linux and macOS are supported. On Windows, use WSL2.
+The Scaffold-HBAR CLI additionally requires `forge` on your PATH and a configured Git name and email. Check these with `forge --version`, `git config user.name` and `git config user.email`.
 
 ```sh
 npx create-scaffold-hbar@latest neuron-app --template Satianurag/neuron-customer-app-scaffold-hbar
@@ -31,122 +28,86 @@ npm ci --engine-strict
 npm run dev
 ```
 
-When prompted, choose **Next.js App Router**, **Foundry**, **npm** as the package manager and **testnet**.
+Choose **Next.js App Router**, **Foundry**, **npm** and **testnet** when prompted. The app defaults to testnet; the CLI's network selection does not set `HEDERA_NETWORK`.
 
-If `forge` is not installed, this pinned command provides the official Foundry executable and runs the CLI non-interactively:
+Without a global `forge`, this command supplies the pinned executable:
 
 ```sh
 npx --yes --package=@foundry-rs/forge@1.7.1 --package=create-scaffold-hbar@0.4.1 -c 'create-scaffold-hbar neuron-app --template Satianurag/neuron-customer-app-scaffold-hbar --frontend nextjs-app --solidity-framework foundry --network testnet --skip-install --skip-hedera-skills --yes --ci --package-manager=npm'
+cd neuron-app
+npm ci --engine-strict
+npm run dev
 ```
 
-Open **http://localhost:3000**. **Services** lists current testnet directory records and **Evidence** inspects any HCS topic. If an external service is unavailable, the page says so; it never shows generated placeholder records.
+CLI 0.4.1 has an upstream archive-extractor dependency affected by [published security advisories](https://github.com/isaacs/node-tar/security/advisories/GHSA-23hp-3jrh-7fpw). The clone-based quick start avoids that extractor.
 
-The CLI network choice does not configure the app. Set `HEDERA_NETWORK` explicitly. CLI 0.4.1 also adds its default Foundry library submodules; this contract does not import them.
+## Choose an integration
+
+| Integration          | Included behavior                                                                                         | Setup                                                                                               |
+| -------------------- | --------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Service explorer     | Directory records with account, key and topic checks                                                      | Available on testnet by default                                                                     |
+| HCS evidence viewer  | Exact bytes, chunk reassembly, payer and signed-envelope checks                                           | Available on testnet and mainnet by default                                                         |
+| Aviation data stream | QUIC → authenticated WebSocket → browser, Mode-S decoding and reconnect handling                          | [Streaming configuration](docs/configuration.md#legacy-streaming)                                   |
+| Paid file service    | Signed negotiation, per-session file delivery, ERC20 escrow, buyer approval and timeout refund            | [Reference adapter](packages/neuron-reference/README.md) · [CSV example](docs/paid-data-example.md) |
+| Native-HBAR checkout | Signed quotes, HBAR funding, same-session delivery, buyer approval, seller withdrawal and deadline refund | [Native seller setup](docs/native-seller.md)                                                        |
+
+Each payment flow has its own protocol and contract. Select the adapter that matches your seller; the aviation protocol, reference ERC20 invoice and `neuronCustomerQuote/v1` HBAR quote are not interchangeable.
 
 ## Configure
 
-Optional settings go in `packages/nextjs/.env.local`. Start from [`packages/nextjs/.env.example`](packages/nextjs/.env.example); every write feature is disabled by default.
+Copy [`packages/nextjs/.env.example`](packages/nextjs/.env.example) to `packages/nextjs/.env.local` when you need optional features. All write features are disabled by default.
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `HEDERA_NETWORK` | `testnet` | `testnet` or `mainnet`. Mainnet is read-only in this template |
-| `NEURON_ENABLE_CUSTOMER_AUTH` | `false` | Wallet sign-in and customer sessions (also needs `NEURON_APP_ORIGIN` and `NEURON_CUSTOMER_DB_FILE`) |
-| `NEURON_ENABLE_REFERENCE_COMMERCE` | `false` | Paid document service through the reference adapter |
-| `NEURON_ENABLE_LOCAL_STREAM` / `NEURON_ENABLE_REMOTE_STREAM` | `false` | Live aviation stream through the legacy gateway |
-| `NEURON_ENABLE_CUSTOMER_REQUEST`, `_COMMERCE_REVIEW`, `_FUNDING`, `_APPROVAL` | `false` | Native-HBAR request, quote review, escrow funding and approval steps |
+- **Network:** `HEDERA_NETWORK=testnet` by default; mainnet supports read-only app views.
+- **Wallet sessions:** enable `NEURON_ENABLE_CUSTOMER_AUTH` and configure the exact `NEURON_APP_ORIGIN` and an owner-only `NEURON_CUSTOMER_DB_FILE` outside the checkout.
+- **Adapters:** enable only the switches for the service you have configured. Use the guide linked in the table above.
 
-Every variable, with recovery steps, is in the [configuration guide](docs/configuration.md). Private keys never go in `NEXT_PUBLIC_*` variables or in the repository.
-
-## What you can build
-
-| Example | Included behavior | Setup |
-| --- | --- | --- |
-| Service explorer | Live directory; seller account, key and topic checks; provenance labels | Works by default on testnet |
-| HCS evidence viewer | Topic metadata, exact bytes, bounded chunk reassembly, payer and signed-envelope checks | Works by default on either network |
-| Binary data consumer | QUIC → authenticated WebSocket → browser, Mode-S decoding, stale and disconnected states | [Legacy gateway](docs/configuration.md#legacy-streaming) |
-| Paid document service | Signed negotiation, real file transport, exact ERC20 allowance and deposit, buyer approval, seller payment, timeout refund | [Reference adapter](packages/neuron-reference/README.md) |
-| Native-HBAR escrow | Signed quotes, an owned seller, authenticated transport and separately gated escrow funding/approval | [Native seller setup](docs/native-seller.md) |
-
-These are separate protocol adapters. A legacy aviation seller does not automatically accept the reference ERC20 invoice or this template's native-HBAR quote. This is an independent integration, not endorsed by Neuron.
+The [configuration guide](docs/configuration.md) explains setup and recovery; the [environment reference](docs/environment.md) lists variables, defaults and validation. Keep keys and tokens outside the repository and out of `NEXT_PUBLIC_*` variables. Go commands read their process environment, not Next.js `.env.local`.
 
 ## Make it yours
 
-| Change | Start here |
-| --- | --- |
-| Landing page, navigation, styling | `packages/nextjs/app/page.tsx`, `app/layout.tsx`, `app/style.css` |
-| Service discovery and identity | `packages/neuron-hedera/src/legacy.ts` |
-| Network and Mirror Node rules | `packages/neuron-hedera/src/network.ts`, `src/mirror.ts` |
-| Decode another data format | `packages/neuron-hedera/src/frames.ts` and the session view |
-| Change the delivered document | The reference adapter's private `sourceFile` setting |
-| Add a payment protocol | A new adapter with explicit terms, asset units and recovery rules |
-| Change the escrow contract | `packages/foundry/src/BuyerEscrow.sol` and its tests |
+| Change                               | Start here                                                        |
+| ------------------------------------ | ----------------------------------------------------------------- |
+| Landing page, navigation and styling | `packages/nextjs/app/page.tsx`, `app/layout.tsx`, `app/style.css` |
+| Discovery and service identity       | `packages/neuron-hedera/src/legacy.ts`                            |
+| Network and Mirror reads             | `packages/neuron-hedera/src/network.ts`, `src/mirror.ts`          |
+| Another data format                  | `packages/neuron-hedera/src/frames.ts` and the session view       |
+| Delivered file                       | Reference adapter's `sourceFile` configuration                    |
+| Escrow terms                         | `packages/foundry/src/BuyerEscrow.sol` and its tests              |
 
-Keep network, identity, transport and payment checks independent. See [architecture and extension points](docs/architecture.md).
+See [architecture](docs/architecture.md) for package responsibilities, state transitions and extension points.
 
-## Repository layout
+## Development commands
 
-```text
-packages/
-  nextjs/             App Router UI, authenticated API routes, customer journal
-  foundry/            Native-HBAR escrow, deployment scripts, contract tests
-  neuron-hedera/      Shared network, Mirror Node, HCS and protocol utilities
-  neuron-go/          Server HCS writer and QUIC/WebSocket gateway
-  neuron-reference/   Optional pinned reference document-service adapter
-deploy/testnet/       Linux service and nginx templates
-docs/                 Configuration, architecture, contract and verification guides
-e2e/                  Browser smoke tests
-```
+Run from the project root:
 
-## Commands
+| Command                                          | Purpose                                                                                  |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| `npm run dev`                                    | Build shared code and start Next.js development server                                   |
+| `npm run build` / `npm run start`                | Build all packages and serve the standalone production app                               |
+| `npm run format` / `npm run format:check`        | Format authored files or check formatting                                                |
+| `npm run test`                                   | Shared, contract and app tests                                                           |
+| `npm run typecheck` / `npm run lint`             | TypeScript and authored JS/TS checks                                                     |
+| `npm run verify`                                 | Tooling, formatting, tests, types, lint, dependency tree and security audit              |
+| `npm run test:e2e`                               | Desktop/mobile browser tests; first build and run `npx playwright install chromium`      |
+| `npm run check:scaffold`                         | Generate from this checkout and verify installation, formatting, tests, build and routes |
+| `npm run check:scaffold-text`                    | Check authored files against the CLI's text transformation                               |
+| `npm run check:evidence` / `npm run test:live`   | Read-only public evidence and network checks                                             |
+| `npm run rebuild:native`                         | Check and repair the local SQLite binding                                                |
+| `npm run reference:build`                        | Build the optional pinned reference bridge in an external cache                          |
+| `npm run hcs:submit` / `npm run contract:deploy` | Explicitly configured transactions; spend network fees                                   |
 
-Run these from the project root.
+[Verification](docs/verification.md) covers all test commands and live fixtures. [Example testnet records](docs/testnet-evidence.md) include public HCS, purchase and refund receipts.
 
-| Command | Purpose |
-| --- | --- |
-| `npm run dev` | Build the shared package and start the dev server |
-| `npm run build` | Build shared code, contracts and the production frontend |
-| `npm run start` | Serve the production build (standalone Next.js server) |
-| `npm run typecheck` / `npm run lint` | TypeScript and ESLint checks |
-| `npm run test` | Shared, contract (including fuzz) and app tests; no network writes |
-| `npm run test:e2e` | Desktop and mobile browser smoke tests against a production build (first run `npx playwright install chromium`) |
-| `npm run check:scaffold` | Scaffold this checkout with the published CLI, then fresh install, lint, build, boot and route checks |
-| `npm run check:scaffold-text` | Confirm no tracked file is altered by the CLI's command rewrite |
-| `npm run verify` | Tests, types, lint, dependency tree and security audit |
-| `npm run test:live` | Opt-in read-only checks against the live network |
-| `npm run hcs:submit` | Submit configured bytes to an HCS topic; spends testnet fees |
-| `npm run contract:deploy` | Deploy the escrow with an explicit signer and fee cap |
-| `npm run reference:build` | Prepare the pinned reference adapter outside the repository |
+## Deployment and guides
 
-## Testnet evidence
-
-Every row is a real testnet operation you can check on the official Mirror Node.
-
-| Operation | Evidence |
-| --- | --- |
-| HCS message submitted by `hcs:submit` from a fresh scaffold | [Transaction `0.0.10725146@1790499070.059923854`](https://testnet.mirrornode.hedera.com/api/v1/transactions/0.0.10725146-1790499070-059923854) · [topic 0.0.10725147 message 13](https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10725147/messages/13) |
-| Current Solidity 0.8.37 `BuyerEscrow` deployed on Hedera EVM | [Contract 0.0.10828632](https://testnet.mirrornode.hedera.com/api/v1/contracts/0.0.10828632) |
-| Native-HBAR purchase with an owned seller: real HCS, public QUIC, MetaMask approval and exact 0.001 HBAR payout | [Seller withdrawal](https://testnet.mirrornode.hedera.com/api/v1/contracts/results/0x2f8871e967420d5f7f2a50124fecbd04dbcf2f586c1f86dd61549770da0f9f06) · [flow and boundaries](docs/verification.md#native-hbar-purchase-with-an-owned-seller) |
-| Paid document purchase in MetaMask: seller withdrawal | [Contract result](https://testnet.mirrornode.hedera.com/api/v1/contracts/results/0x5031eaa0b3a132705b61cf62f9630e46543514d17eea2feb79eb7b3298526196) |
-
-The [verification guide](docs/verification.md) lists the full purchase and refund receipts and how to reproduce every check.
-
-## Limits
-
-- Mainnet is read-only. Mainnet writes are a [separate release](docs/mainnet.md).
-- The owned-seller direct native-HBAR flow is tested end to end with MetaMask. Hosted-directory enrollment, uncontrolled third-party sellers and live WalletConnect/mobile pairing remain separate verification boundaries.
-- The reference adapter builds upstream Neuron source in a local cache and does not redistribute it. Read its [compatibility and licensing notes](packages/neuron-reference/README.md#exact-compatibility-target) before you distribute a build.
-- The app keeps customer state in SQLite, so it runs as a single long-lived server, not on serverless hosting. See [Linux deployment](deploy/testnet/README.md).
-
-## Documentation
+The app uses SQLite and persistent journals: deploy it as one long-lived server with private durable storage. The optional gateway also needs reachable UDP. Follow [Linux testnet deployment](deploy/testnet/README.md).
 
 - [Configuration and recovery](docs/configuration.md)
-- [Architecture and protocol boundaries](docs/architecture.md)
-- [Escrow contract](docs/contracts.md)
-- [Checks and testnet evidence](docs/verification.md)
-- [Linux testnet deployment](deploy/testnet/README.md)
-- [Mainnet release requirements](docs/mainnet.md)
-- [Guide for AI coding agents](AGENTS.md)
+- [Environment reference](docs/environment.md)
+- [Native-HBAR contract and withdrawal](docs/contracts.md)
+- [Network support](docs/mainnet.md)
+- [Contributor instructions](AGENTS.md)
 
 ## License
 
-[MIT](LICENSE) for this repository's original code. Dependencies keep their own licenses.
+[MIT](LICENSE) for this repository's original code. Dependencies retain their own licenses. The optional reference bridge builds external Neuron source; see its [compatibility and licensing notes](packages/neuron-reference/README.md#exact-compatibility-target) before redistributing that source or a built binary.

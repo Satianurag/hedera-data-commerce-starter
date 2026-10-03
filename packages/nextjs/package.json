@@ -6,8 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "node scripts/start.mjs",
-    "typecheck": "next typegen && tsc --noEmit",
-    "lint": "eslint app lib scripts test && oxlint app lib scripts test",
+    "typecheck": "next typegen && node ../../scripts/tsc.mjs --noEmit",
+    "lint": "node ../../scripts/lint.mjs --next",
     "test": "node --test test/*.test.mjs",
     "request:reconcile": "node scripts/reconcile-customer-request.mjs"
   },

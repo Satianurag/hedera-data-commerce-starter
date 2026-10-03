@@ -20,24 +20,36 @@
       "installCommand": "npm ci --engine-strict",
       "sections": [
         {
+          "title": "Run the read-only app",
+          "steps": [
+            {
+              "command": "npm run dev"
+            },
+            {
+              "text": "No credentials are needed for read-only mode. See README.md and docs/configuration.md to enable a testnet adapter."
+            }
+          ]
+        },
+        {
           "title": "Verify the template",
           "steps": [
-            { "command": "npm run verify" }
+            {
+              "command": "npm run verify"
+            }
           ]
         },
         {
           "title": "Run the browser smoke tests",
           "steps": [
-            { "command": "npx playwright install chromium" },
-            { "command": "npm run build" },
-            { "command": "npm run test:e2e" }
-          ]
-        },
-        {
-          "title": "Run the read-only app",
-          "steps": [
-            { "command": "npm run dev" },
-            { "text": "No credentials are needed for read-only mode. See README.md and docs/configuration.md to enable a testnet adapter." }
+            {
+              "command": "npx playwright install chromium"
+            },
+            {
+              "command": "npm run build"
+            },
+            {
+              "command": "npm run test:e2e"
+            }
           ]
         }
       ]

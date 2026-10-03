@@ -20,14 +20,22 @@ export async function POST(request: Request): Promise<Response> {
   try {
     if (!origin) throw new Error("Missing app origin");
     appOrigin = new URL(origin);
-    const localOrigin = appOrigin.protocol === "http:" &&
-      ["localhost", "127.0.0.1"].includes(appOrigin.hostname) && Boolean(appOrigin.port);
+    const localOrigin =
+      appOrigin.protocol === "http:" &&
+      ["localhost", "127.0.0.1"].includes(appOrigin.hostname) &&
+      Boolean(appOrigin.port);
     const publicOrigin = appOrigin.protocol === "https:" && !appOrigin.port;
-    if ((!localOrigin && !publicOrigin) ||
-        (publicOrigin && (!remoteEnabled || process.env.NEURON_ENABLE_CUSTOMER_AUTH !== "true")) ||
-        appOrigin.origin !== origin ||
-        appOrigin.pathname !== "/" || appOrigin.search || appOrigin.hash ||
-        appOrigin.username || appOrigin.password) throw new Error("Invalid app origin");
+    if (
+      (!localOrigin && !publicOrigin) ||
+      (publicOrigin && (!remoteEnabled || process.env.NEURON_ENABLE_CUSTOMER_AUTH !== "true")) ||
+      appOrigin.origin !== origin ||
+      appOrigin.pathname !== "/" ||
+      appOrigin.search ||
+      appOrigin.hash ||
+      appOrigin.username ||
+      appOrigin.password
+    )
+      throw new Error("Invalid app origin");
   } catch {
     return Response.json({ error: "App origin is invalid" }, { status: 503 });
   }
@@ -43,7 +51,8 @@ export async function POST(request: Request): Promise<Response> {
   if (process.env.NEURON_ENABLE_CUSTOMER_AUTH === "true") {
     try {
       const authOrigin = customerAuthOrigin();
-      if (!authOrigin || authOrigin.origin !== appOrigin.origin) throw new Error("Customer auth origin mismatch");
+      if (!authOrigin || authOrigin.origin !== appOrigin.origin)
+        throw new Error("Customer auth origin mismatch");
       customerSession = getCustomerSession(authOrigin, customerToken(request, authOrigin));
       if (!customerSession) {
         return Response.json({ error: "Customer sign-in required" }, { status: 401 });
@@ -61,13 +70,25 @@ export async function POST(request: Request): Promise<Response> {
   let url: URL;
   try {
     url = new URL(gatewayUrl);
-    const localUrl = localEnabled && url.protocol === "ws:" &&
-      ["127.0.0.1", "localhost"].includes(url.hostname) && Boolean(url.port);
-    const remoteUrl = remoteEnabled && url.protocol === "wss:" && !url.port &&
+    const localUrl =
+      localEnabled &&
+      url.protocol === "ws:" &&
+      ["127.0.0.1", "localhost"].includes(url.hostname) &&
+      Boolean(url.port);
+    const remoteUrl =
+      remoteEnabled &&
+      url.protocol === "wss:" &&
+      !url.port &&
       Boolean(process.env.NEURON_GATEWAY_PUBLIC_HOST) &&
       url.hostname === process.env.NEURON_GATEWAY_PUBLIC_HOST;
-    if ((!localUrl && !remoteUrl) || url.pathname !== "/stream" ||
-        url.search || url.hash || url.username || url.password) {
+    if (
+      (!localUrl && !remoteUrl) ||
+      url.pathname !== "/stream" ||
+      url.search ||
+      url.hash ||
+      url.username ||
+      url.password
+    ) {
       throw new Error("Invalid gateway URL");
     }
   } catch {
@@ -78,38 +99,59 @@ export async function POST(request: Request): Promise<Response> {
     if (direct) await checkDirectSellerBinding(networkConfigFromEnv(process.env), direct);
     if (!isAbsolute(tokenPath)) throw new Error("Session secret path must be absolute");
     const [info, parent] = await Promise.all([lstat(tokenPath), lstat(dirname(tokenPath))]);
-    if (!info.isFile() || info.isSymbolicLink() || (info.mode & 0o077) !== 0 ||
-        !parent.isDirectory() || parent.isSymbolicLink() || (parent.mode & 0o077) !== 0 ||
-        (process.getuid && (info.uid !== process.getuid() || parent.uid !== process.getuid()))) {
+    if (
+      !info.isFile() ||
+      info.isSymbolicLink() ||
+      (info.mode & 0o077) !== 0 ||
+      !parent.isDirectory() ||
+      parent.isSymbolicLink() ||
+      (parent.mode & 0o077) !== 0 ||
+      (process.getuid && (info.uid !== process.getuid() || parent.uid !== process.getuid()))
+    ) {
       throw new Error("Session secret and parent directory must be owner-only");
     }
     const token = (await readFile(tokenPath, "utf8")).trim();
     if (!/^[0-9a-fA-F]{64}$/.test(token)) throw new Error("Session secret is invalid");
     const healthUrl = gatewayServerEndpoint(url, "/health");
-    const healthResponse = await fetch(healthUrl, { cache: "no-store", redirect: "error", signal: AbortSignal.timeout(3_000) });
+    const healthResponse = await fetch(healthUrl, {
+      cache: "no-store",
+      redirect: "error",
+      signal: AbortSignal.timeout(3_000),
+    });
     if (!healthResponse.ok) throw new Error("Gateway is unavailable");
     const health: unknown = await healthResponse.json();
-    if (!health || typeof health !== "object" ||
-        (health as Record<string, unknown>).network !== "testnet" ||
-        (health as Record<string, unknown>).sellerAccount !== sellerAccount ||
-        typeof (health as Record<string, unknown>).instanceId !== "string" ||
-        !/^[0-9a-f]{32}$/.test((health as Record<string, string>).instanceId)) {
+    if (
+      !health ||
+      typeof health !== "object" ||
+      (health as Record<string, unknown>).network !== "testnet" ||
+      (health as Record<string, unknown>).sellerAccount !== sellerAccount ||
+      typeof (health as Record<string, unknown>).instanceId !== "string" ||
+      !/^[0-9a-f]{32}$/.test((health as Record<string, string>).instanceId)
+    ) {
       throw new Error("Gateway seller or network mismatch");
     }
     const expiry = Math.floor(Date.now() / 1000) + 45;
     const nonce = randomBytes(16).toString("hex");
     const ownerHex = customerSession?.ownerAddress.slice(2).toLowerCase();
-    const payload = customerSession ?
-      `v2:${expiry}:${nonce}:${customerSession.sessionId}:${ownerHex}:${sellerAccount}:${(health as Record<string, string>).instanceId}` :
-      `v1:${expiry}:${nonce}:${sellerAccount}:${(health as Record<string, string>).instanceId}`;
+    const payload = customerSession
+      ? `v2:${expiry}:${nonce}:${customerSession.sessionId}:${ownerHex}:${sellerAccount}:${(health as Record<string, string>).instanceId}`
+      : `v1:${expiry}:${nonce}:${sellerAccount}:${(health as Record<string, string>).instanceId}`;
     const signature = createHmac("sha256", Buffer.from(token, "hex")).update(payload).digest("hex");
-    const ticket = customerSession ?
-      `auth.v2.${expiry}.${nonce}.${customerSession.sessionId}.${ownerHex}.${signature}` :
-      `auth.v1.${expiry}.${nonce}.${signature}`;
-    return Response.json({ url: url.href, sellerAccount, ticket,
-      discovery: direct ? "direct" : "canonical", transport: direct?.transport ?? "public" }, {
-      headers: { "Cache-Control": "no-store" },
-    });
+    const ticket = customerSession
+      ? `auth.v2.${expiry}.${nonce}.${customerSession.sessionId}.${ownerHex}.${signature}`
+      : `auth.v1.${expiry}.${nonce}.${signature}`;
+    return Response.json(
+      {
+        url: url.href,
+        sellerAccount,
+        ticket,
+        discovery: direct ? "direct" : "canonical",
+        transport: direct?.transport ?? "public",
+      },
+      {
+        headers: { "Cache-Control": "no-store" },
+      },
+    );
   } catch {
     return Response.json({ error: "Gateway is unavailable or misconfigured" }, { status: 503 });
   }

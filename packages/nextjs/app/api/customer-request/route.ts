@@ -1,6 +1,16 @@
-import { customerAuthOrigin, customerToken, getCustomerSession, sameOrigin } from "../../../lib/customer-auth";
-import { CustomerRequestConflict, customerRequestEnabled, latestCustomerRequest,
-  preflightCustomerRequestDescriptor, startCustomerRequest } from "../../../lib/customer-request";
+import {
+  customerAuthOrigin,
+  customerToken,
+  getCustomerSession,
+  sameOrigin,
+} from "../../../lib/customer-auth";
+import {
+  CustomerRequestConflict,
+  customerRequestEnabled,
+  latestCustomerRequest,
+  preflightCustomerRequestDescriptor,
+  startCustomerRequest,
+} from "../../../lib/customer-request";
 
 export const runtime = "nodejs";
 
@@ -16,7 +26,8 @@ function authenticate(request: Request, write: boolean) {
   }
   const token = customerToken(request, origin);
   const session = getCustomerSession(origin, token);
-  if (!session) return { error: Response.json({ error: "Customer sign-in required" }, { status: 401 }) };
+  if (!session)
+    return { error: Response.json({ error: "Customer sign-in required" }, { status: 401 }) };
   return { origin, token, session };
 }
 
@@ -26,8 +37,7 @@ export async function GET(request: Request): Promise<Response> {
     if ("error" in auth) return auth.error!;
     const current = latestCustomerRequest(auth.session!, auth.origin!);
     if (!current) await preflightCustomerRequestDescriptor();
-    return Response.json({ request: current },
-      { headers: { "Cache-Control": "no-store" } });
+    return Response.json({ request: current }, { headers: { "Cache-Control": "no-store" } });
   } catch {
     return Response.json({ error: "Seller request status is unavailable" }, { status: 503 });
   }
@@ -51,6 +61,9 @@ export async function POST(request: Request): Promise<Response> {
     if (error instanceof CustomerRequestConflict) {
       return Response.json({ error: error.message }, { status: error.status });
     }
-    return Response.json({ error: "Seller request is unavailable or needs operator reconciliation" }, { status: 503 });
+    return Response.json(
+      { error: "Seller request is unavailable or needs operator reconciliation" },
+      { status: 503 },
+    );
   }
 }

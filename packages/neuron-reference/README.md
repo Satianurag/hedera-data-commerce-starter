@@ -2,7 +2,7 @@
 
 This optional **testnet-only** adapter connects the template to the pinned Neuron reference protocol. It imports the upstream canonical payment messages, signatures, EVM contract bindings, ECIES connection setup and real libp2p file transport. The application supplies durable state and explicit browser-wallet approval around them.
 
-The service delivers the actual bytes of one operator-selected, permitted file. A permitted project document can be used as the example content. It is a document delivery example, not a live aviation feed. Existing legacy aviation streaming and the starter's native-HBAR escrow remain separate adapters.
+The service delivers the actual bytes of one operator-selected, permitted file. Follow the [maintenance report example](../../docs/paid-data-example.md) to configure a CSV purchase. Legacy aviation streaming and native-HBAR escrow use separate adapters.
 
 ## Exact compatibility target
 
@@ -13,26 +13,28 @@ The service delivers the actual bytes of one operator-selected, permitted file. 
 - Protocol payloads use the original upstream `payment` serializers unchanged. `serviceParams` is the upstream-defined application map; it carries the customer wallet, chain, escrow, immutable document hash/size/name and refund deadline for this document service.
 - `agreementHash` is the upstream Keccak-256 of the canonical accepted `serviceResponse`. Its unique request ID refers to the signed service request containing exact terms.
 - Escrow references are the upstream `<contractAddress>:<escrowId>` and release references add `:<releaseId>`. Network binding is separately enforced by the immutable testnet configuration and chain checks.
-- The pinned invoice has eight canonical fields and **no `evidenceHash` field**. Evidence is bound by the onchain release request referenced by the invoice. The bridge verifies its exact amount, seller recipient and evidence hash before exposing buyer approval. This resolves the observed implementation path without claiming the draft's contradictory prose is settled.
-- `bridge/testdata/upstream-invoice-mirror.json` is a historical signed reference-demo invoice from testnet topic `0.0.10709352`, sequence `3`, fetched 27 September 2026. Its `mem-*` references mean it proves original invoice bytes/signature only, never candidate settlement.
+- The pinned invoice has eight canonical fields and **no `evidenceHash` field**. Evidence is bound by the onchain release request referenced by the invoice. The bridge verifies its exact amount, seller recipient and evidence hash before exposing buyer approval. Use the pinned serializer and contract binding together.
+- `bridge/testdata/upstream-invoice-mirror.json` preserves an upstream signed invoice for serializer/signature regression tests; its `mem-*` references are demo identifiers.
 
 The buyer's protocol identity is a server delegate. The signed-in customer wallet is separately bound in the signed request and is the actual onchain escrow buyer. The bridge has **no customer payment key**. Customer create, token allowance, deposit, release approval and refund calls are prepared as unsigned transactions and individually approved in the browser wallet. A separate seller key signs only its release request and withdrawal, with the recipient fixed to that seller.
 
-This is an original orchestration adapter around upstream reference components. Both actual P2P peers run on the same host over loopback QUIC, so the user's blocked inbound router does not prevent this bounded path. The adapter alone does not establish compatibility with another deployed seller, remote P2P reachability, official registry discovery, official endorsement or physical sensor provenance. Browser receipt has its own byte/hash check. The delivered file is downloadable through the customer's authenticated app session.
+Both P2P peers run on the same host over loopback QUIC. No public UDP listener is required. Browser receipt has its own byte/hash check; the delivered file is downloadable only through the customer's authenticated app session.
 
 ## Prepare and configure
 
-Run `node packages/neuron-reference/scripts/prepare.mjs`. It fetches the exact revision into an external cache and compiles the original bridge overlay as `cmd/scaffold-reference`. The upstream internal Go packages require building in that module. No upstream source or binary is copied into this repository. The upstream checkout has no root license file at this revision; public redistribution of its source/binary requires separate license review. Our wrapper follows this repository's license without relicensing upstream code.
+Run `node packages/neuron-reference/scripts/prepare.mjs`. It fetches the exact revision into an external cache and compiles the original bridge overlay as `cmd/scaffold-reference`. The upstream internal Go packages require building in that module. No upstream source or binary is copied into this repository. The pinned upstream checkout has no root license file. Resolve its distribution rights before redistributing upstream source or the built binary; this repository's MIT license covers its original wrapper code only.
 
-The preparation command prints the absolute binary path. Set `NEURON_REFERENCE_CACHE` to change the owner-controlled build cache. Go 1.27.1 can be selected through the standard Go toolchain mechanism. A changed upstream source checkout is rejected.
+The preparation command prints the absolute binary path. Set `NEURON_REFERENCE_CACHE` to change the owner-controlled build cache. Go 1.27.1 can be selected through the standard Go toolchain mechanism. Changed upstream source, unexpected untracked/ignored inputs, symlinks and concurrent prepare operations are rejected. A stale generated bridge overlay is replaced exactly from the current template; its prior contents are retained under `retained-overlays` outside the repository. Changed generated `go.mod`/`go.sum` bytes are preserved under content-addressed `retained-manifests` before those files are reset to the pinned upstream baseline and declared compatibility patches are reapplied. Provenance records retention paths, overlay hashes and the resolved module graph. A failed preparation does not replace the last successful binary. A killed prepare can leave `.prepare.lock`, which records its PID. Verify that no process is still preparing this exact cache before explicitly removing only that lock; elapsed time or a PID check alone is insufficient because PIDs can be reused. Never remove runtime customer state or transaction journals to repair a build cache.
+
+The [verification commands](#verification) cover clean preparation and stale-cache recovery.
 
 Create an owner-only directory outside this repository (mode 0700). Copy `config.example.json` there as a mode-0600 file and provide:
 
 1. A limited, funded testnet HCS operator account/key; two existing open topics without custom fees. If needed, `npm run reference:setup` creates buyer/seller inbox topics with your explicit `HEDERA_NETWORK=testnet`, `HEDERA_OPERATOR_ACCOUNT_ID`, `HEDERA_OPERATOR_KEY_FILE` and a pre-existing private `NEURON_REFERENCE_STATE_DIR`. This command spends testnet fees and journals each ID before sending; preserve `topics.json` when reconciling or rerunning.
-2. Separate buyer protocol delegate and seller secp256k1 keys. Raw 32-byte hex and DER hex files are accepted. The seller account must have its key-derived EVM alias and enough testnet HBAR for its bounded release/withdrawal fees. Use fresh credentials dedicated to your test deployment.
+2. Separate buyer protocol delegate and seller secp256k1 keys. Raw 32-byte hex and DER hex files are accepted. The seller account must have its EVM Address from Public Key and enough testnet HBAR for its bounded release/withdrawal fees. Use fresh credentials dedicated to your test deployment.
 3. A deployed upstream ERC20 escrow and token, their independently checked runtime Keccak hashes, exact token decimals/symbol and a small price. No contract is deployed or token minted automatically by bridge startup.
 4. An immutable permitted source file, a 120–86,400 second refund window, lifetime session limit and bounded HCS/gas fees. For an interactive wallet run allow enough time for each explicit customer decision. A source/configuration change requires a fresh state directory; existing funded sessions must remain recoverable under their original configuration.
-5. A random bearer token of at least 32 characters in a mode-0600 file; it never goes into a browser or repository.
+5. A random bearer token of 32–128 URL-safe characters (letters, digits, `_` or `-`), such as 64 random hex characters in a mode-0600 file; it never goes into a browser or repository.
 
 Set these server-only environment variables:
 
@@ -47,7 +49,7 @@ Start the prepared binary without arguments. `--check` runs read-only account/to
 
 ## Restart the configured local service
 
-Use Node **22.23.3** from `.nvmrc` for installation, build and startup. `better-sqlite3` 13 uses Node-API with a native binary for the operating system and architecture. If that binary is missing or incompatible with the host, select a supported Node version, then run `npm run rebuild:native` in the repository root.
+Use a supported Node version from the [root prerequisites](../../README.md) for installation, build and startup. `better-sqlite3` 13 uses Node-API with a native binary for the operating system and architecture. If that binary is missing or incompatible with the host, select a supported Node version, then run `npm run rebuild:native` in the repository root.
 
 Keep a trusted, operator-maintained shell environment file outside the repository, mode 0600 in a 0700 directory. Include the bridge variables above with their existing paths, plus:
 
@@ -64,7 +66,6 @@ NEURON_REFERENCE_URL=http://127.0.0.1:8098
 From the repository root, load that same file in each terminal using its actual absolute path. Start the bridge in the first terminal:
 
 ```sh
-nvm use
 set -a
 . /absolute/owner-only/reference-runtime.env
 set +a
@@ -74,7 +75,6 @@ set +a
 After the bridge reports ready on `127.0.0.1:8098`, start the existing production build in a second terminal:
 
 ```sh
-nvm use
 set -a
 . /absolute/owner-only/reference-runtime.env
 set +a
@@ -105,11 +105,19 @@ The pinned escrow accepts token deposits from other wallets, even after payout o
 
 Journal version 2 stores both signed HCS envelope and payload as base64 byte fields, preserving them through JSON formatting and restarts. On startup, legacy unversioned journals are migrated only when undoing the old writer’s formatting restores the recorded SHA-256, valid signature, sender and matching embedded payload. The exact original is atomically saved as `<session-id>.json.v1.bak` before replacement; retain it with the journal. Unknown versions or changed signed content fail closed. Neither migration nor recovery changes transaction IDs, re-signs messages or blindly submits another HCS transaction.
 
-The underlying upstream escrow has draft limitations and is enabled only for this limited testnet path. The bridge refuses a second buyer deposit into the same escrow, never changes the release recipient, and never approves a buyer release automatically. It does not make the upstream contract production safe or pass the separate mainnet release gate.
+The adapter supports testnet only. It refuses a second buyer deposit into the same escrow, fixes the release recipient and requires explicit buyer approval for each release.
 
 ## Verification
 
-Run the focused bridge checks from the prepared upstream module (`<cache>/source/impl/golang`):
+From the template root, run the preparation integration check:
+
+```sh
+node --test packages/neuron-reference/scripts/prepare.integration.test.mjs
+```
+
+It fetches the pinned source into a disposable cache, builds twice, checks stale overlay/manifest recovery and unexpected-source rejection, then runs Go race tests and vet. CI runs this check. Fast cache regressions also run in `npm run test:tooling`. Neither sends Hedera transactions.
+
+To check an existing prepared module (`<cache>/source/impl/golang`), run:
 
 ```sh
 GOTOOLCHAIN=go1.27.1 go test -race -count=1 ./cmd/scaffold-reference
@@ -118,6 +126,4 @@ GOTOOLCHAIN=go1.27.1 go vet ./cmd/scaffold-reference
 
 The local regression suite runs the pinned original ERC20 and escrow bytecode in an in-process EVM: shared allowance consumption/reapproval, stale deposit opening, dust before/after funding, exact seller payout, surplus/full refund and deposits after refund. Its seeded delivery/HCS records isolate payment accounting; they do not prove live Hedera or P2P delivery. Separate tests preserve signed bytes across versioned/legacy journals and SIGKILL, reject corruption, and reconcile an unverified persisted message against a local HTTP Mirror fixture.
 
-A live acceptance run needs real configured resources and explicit wallet approval: one exact-file paid purchase and a separate funded timeout-refund session. Record source revision, HCS references, file SHA-256, escrow IDs, token units, receipt results and buyer/seller balance changes. Do not present mock upstream demo settlement as real escrow proof.
-
-[The template verification record](../../docs/verification.md) contains completed authenticated API and installed-MetaMask testnet purchase/refund evidence. Both P2P peers ran on one host. These completed flows do not need repeating after a documentation-only change; repeat affected behavior when protocol, transaction or transport code changes.
+For a configured testnet service, verify one exact-file purchase and a separate funded timeout refund with explicit wallet approval. Record revision, HCS references, file SHA-256, escrow IDs, token units, receipt results and buyer/seller balance changes. See the [maintenance report walkthrough](../../docs/paid-data-example.md) and [historical testnet evidence](../../docs/testnet-evidence.md).

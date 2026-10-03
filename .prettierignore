@@ -1,0 +1,16 @@
+# Generated, vendored and byte-bound evidence must never be rewritten.
+**/node_modules/**
+**/.next/**
+**/dist/**
+**/out/**
+**/build/**
+**/cache/**
+**/coverage/**
+**/artifacts/**
+**/next-env.d.ts
+**/fixtures/**
+**/testdata/**
+packages/foundry/lib/**
+playwright-report/**
+test-results/**
+package-lock.json

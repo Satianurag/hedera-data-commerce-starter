@@ -15,11 +15,16 @@ if (!existsSync(join(server, "server.js")) || !existsSync(staticSource)) {
 
 cpSync(staticSource, join(server, ".next", "static"), { recursive: true, force: true });
 const publicSource = join(app, "public");
-if (existsSync(publicSource)) cpSync(publicSource, join(server, "public"), { recursive: true, force: true });
+if (existsSync(publicSource))
+  cpSync(publicSource, join(server, "public"), { recursive: true, force: true });
 
 const child = spawn(process.execPath, [join(server, "server.js")], {
   stdio: "inherit",
-  env: { ...process.env, PORT: process.env.PORT ?? "3000", HOSTNAME: process.env.HOST ?? "127.0.0.1" },
+  env: {
+    ...process.env,
+    PORT: process.env.PORT ?? "3000",
+    HOSTNAME: process.env.HOST ?? "127.0.0.1",
+  },
 });
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => child.kill(signal));
 child.on("exit", (code, signal) => {

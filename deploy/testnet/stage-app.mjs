@@ -18,7 +18,8 @@ const staticTarget = join(server, ".next", "static");
 mkdirSync(staticTarget, { recursive: true });
 cpSync(staticSource, staticTarget, { recursive: true, force: true });
 const publicSource = join(app, "public");
-if (existsSync(publicSource)) cpSync(publicSource, join(server, "public"), { recursive: true, force: true });
+if (existsSync(publicSource))
+  cpSync(publicSource, join(server, "public"), { recursive: true, force: true });
 console.log(`Staged standalone app at ${standalone}`);
 console.log(`Built on Linux ${process.arch} with Node ${process.version}`);
 console.log(`Run with HOSTNAME=127.0.0.1 PORT=3000 node ${join(server, "server.js")}`);

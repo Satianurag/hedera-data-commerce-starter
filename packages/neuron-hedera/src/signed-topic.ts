@@ -22,7 +22,8 @@ function uint64(value: unknown, name: string): bigint {
 function base64(value: unknown, name: string): Buffer {
   if (typeof value !== "string") throw new Error(`Signed topic ${name} must be base64`);
   const bytes = Buffer.from(value, "base64");
-  if (bytes.toString("base64") !== value) throw new Error(`Signed topic ${name} is not canonical base64`);
+  if (bytes.toString("base64") !== value)
+    throw new Error(`Signed topic ${name} is not canonical base64`);
   return bytes;
 }
 
@@ -37,8 +38,10 @@ export function inspectSignedTopicEnvelope(bytes: Uint8Array): SignedTopicEnvelo
   const row = data as Record<string, unknown>;
   if (!("senderAddress" in row) && !("signature" in row)) return null;
   const keys = Object.keys(row);
-  if (keys.join(",") !== "senderAddress,signature,timestamp,sequenceNumber,payload" ||
-      JSON.stringify(row) !== Buffer.from(bytes).toString("utf8")) {
+  if (
+    keys.join(",") !== "senderAddress,signature,timestamp,sequenceNumber,payload" ||
+    JSON.stringify(row) !== Buffer.from(bytes).toString("utf8")
+  ) {
     throw new Error("Signed topic envelope is not canonical JSON");
   }
   let senderAddress: string;
@@ -52,10 +55,12 @@ export function inspectSignedTopicEnvelope(bytes: Uint8Array): SignedTopicEnvelo
   }
   const timestamp = uint64(row.timestamp, "timestamp");
   const sequenceNumber = uint64(row.sequenceNumber, "sequenceNumber");
-  if (timestamp === 0n || sequenceNumber === 0n) throw new Error("Signed topic timestamp and sequence must be positive");
+  if (timestamp === 0n || sequenceNumber === 0n)
+    throw new Error("Signed topic timestamp and sequence must be positive");
   const payload = base64(row.payload, "payload");
   const signatureBytes = base64(row.signature, "signature");
-  if (signatureBytes.length !== 65 || signatureBytes[64] > 1) throw new Error("Signed topic signature must be R||S||V with V 0 or 1");
+  if (signatureBytes.length !== 65 || signatureBytes[64] > 1)
+    throw new Error("Signed topic signature must be R||S||V with V 0 or 1");
   const preimage = Buffer.allocUnsafe(16 + payload.length);
   preimage.writeBigUInt64BE(timestamp, 0);
   preimage.writeBigUInt64BE(sequenceNumber, 8);

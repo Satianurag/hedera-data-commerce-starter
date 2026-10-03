@@ -1,9 +1,21 @@
-import { customerAuthOrigin, customerToken, getCustomerSession,
-  InvalidCustomerRequest, readObject, sameOrigin } from "../../../lib/customer-auth";
+import {
+  customerAuthOrigin,
+  customerToken,
+  getCustomerSession,
+  InvalidCustomerRequest,
+  readObject,
+  sameOrigin,
+} from "../../../lib/customer-auth";
 import { CommerceIssue } from "../../../lib/customer-commerce";
-import { attachCustomerRefundHash, customerRefundForFunding, latestCustomerRefund, openCustomerRefundWallet,
+import {
+  attachCustomerRefundHash,
+  customerRefundForFunding,
+  latestCustomerRefund,
+  openCustomerRefundWallet,
   prepareCustomerRefund,
-  reconcileCustomerRefund, retryCustomerRefundWallet } from "../../../lib/customer-funding";
+  reconcileCustomerRefund,
+  retryCustomerRefundWallet,
+} from "../../../lib/customer-funding";
 
 export const runtime = "nodejs";
 
@@ -28,16 +40,21 @@ export async function GET(request: Request): Promise<Response> {
     if ("error" in auth) return auth.error!;
     const url = new URL(request.url);
     const fundingId = url.searchParams.get("fundingId");
-    if ([...url.searchParams.keys()].some(key => key !== "fundingId") ||
-        url.searchParams.getAll("fundingId").length > 1) {
+    if (
+      [...url.searchParams.keys()].some((key) => key !== "fundingId") ||
+      url.searchParams.getAll("fundingId").length > 1
+    ) {
       return json({ error: "Invalid refund history request" }, 400);
     }
-    const existing = fundingId ? customerRefundForFunding(auth.session!, auth.origin!, fundingId) :
-      latestCustomerRefund(auth.session!, auth.origin!);
+    const existing = fundingId
+      ? customerRefundForFunding(auth.session!, auth.origin!, fundingId)
+      : latestCustomerRefund(auth.session!, auth.origin!);
     if (!existing) return json({ refund: null });
     try {
-      return json({ refund: await reconcileCustomerRefund(auth.session!, auth.origin!, existing.id),
-        reconciliation: "current" });
+      return json({
+        refund: await reconcileCustomerRefund(auth.session!, auth.origin!, existing.id),
+        reconciliation: "current",
+      });
     } catch {
       return json({ refund: existing, reconciliation: "unavailable" });
     }
@@ -54,26 +71,56 @@ export async function POST(request: Request): Promise<Response> {
     const auth = authenticate(request, true);
     if ("error" in auth) return auth.error!;
     const body = await readObject(request);
-    if (body.action === "prepare" && Object.keys(body).sort().join(",") === "action,fundingId" &&
-        typeof body.fundingId === "string") {
+    if (
+      body.action === "prepare" &&
+      Object.keys(body).sort().join(",") === "action,fundingId" &&
+      typeof body.fundingId === "string"
+    ) {
       return json(await prepareCustomerRefund(auth.session!, auth.origin!, body.fundingId));
     }
-    if (body.action === "openWallet" && Object.keys(body).sort().join(",") === "action,refundId" &&
-        typeof body.refundId === "string") {
+    if (
+      body.action === "openWallet" &&
+      Object.keys(body).sort().join(",") === "action,refundId" &&
+      typeof body.refundId === "string"
+    ) {
       return json(await openCustomerRefundWallet(auth.session!, auth.origin!, body.refundId));
     }
-    if (body.action === "retryWallet" && Object.keys(body).sort().join(",") === "acknowledged,action,refundId" &&
-        typeof body.refundId === "string" && body.acknowledged === true) {
+    if (
+      body.action === "retryWallet" &&
+      Object.keys(body).sort().join(",") === "acknowledged,action,refundId" &&
+      typeof body.refundId === "string" &&
+      body.acknowledged === true
+    ) {
       return json(await retryCustomerRefundWallet(auth.session!, auth.origin!, body.refundId));
     }
-    if (body.action === "attach" && ["action,refundId,transactionHash", "action,refundId,transactionHash,walletAttemptId"].includes(Object.keys(body).sort().join(",")) &&
-        typeof body.refundId === "string" && typeof body.transactionHash === "string" &&
-        (body.walletAttemptId === undefined || typeof body.walletAttemptId === "string")) {
-      return json({ refund: attachCustomerRefundHash(auth.session!, auth.origin!, body.refundId, body.transactionHash, body.walletAttemptId as string | undefined) });
+    if (
+      body.action === "attach" &&
+      [
+        "action,refundId,transactionHash",
+        "action,refundId,transactionHash,walletAttemptId",
+      ].includes(Object.keys(body).sort().join(",")) &&
+      typeof body.refundId === "string" &&
+      typeof body.transactionHash === "string" &&
+      (body.walletAttemptId === undefined || typeof body.walletAttemptId === "string")
+    ) {
+      return json({
+        refund: attachCustomerRefundHash(
+          auth.session!,
+          auth.origin!,
+          body.refundId,
+          body.transactionHash,
+          body.walletAttemptId as string | undefined,
+        ),
+      });
     }
-    if (body.action === "reconcile" && Object.keys(body).sort().join(",") === "action,refundId" &&
-        typeof body.refundId === "string") {
-      return json({ refund: await reconcileCustomerRefund(auth.session!, auth.origin!, body.refundId) });
+    if (
+      body.action === "reconcile" &&
+      Object.keys(body).sort().join(",") === "action,refundId" &&
+      typeof body.refundId === "string"
+    ) {
+      return json({
+        refund: await reconcileCustomerRefund(auth.session!, auth.origin!, body.refundId),
+      });
     }
     return json({ error: "Invalid buyer refund request" }, 400);
   } catch (error) {

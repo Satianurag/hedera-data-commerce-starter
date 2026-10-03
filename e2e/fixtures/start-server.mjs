@@ -22,7 +22,7 @@ if (!live) {
   const preload = fileURLToPath(new URL("./server-fetch.cjs", import.meta.url));
   env.NODE_OPTIONS = `--require=${JSON.stringify(preload)}`;
 } else {
-  // Do not inherit an audit/preload hook and accidentally call a mock "live".
+  // Clear inherited test preloads so live mode uses real network responses.
   delete env.NODE_OPTIONS;
 }
 const child = spawn(process.execPath, ["packages/nextjs/scripts/start.mjs"], { stdio: "inherit", env });

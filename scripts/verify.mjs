@@ -5,6 +5,8 @@ const npm = process.env.npm_execpath;
 if (!npm) throw new Error("Run this check with: npm run verify");
 
 const steps = [
+  { label: "toolchain regressions", args: ["run", "test:tooling"] },
+  { label: "formatting", args: ["run", "format:check"] },
   { label: "build and test", args: ["test"] },
   { label: "typecheck", args: ["run", "typecheck"] },
   { label: "lint", args: ["run", "lint"] },

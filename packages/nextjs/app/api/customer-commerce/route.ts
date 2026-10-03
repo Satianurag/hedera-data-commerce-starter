@@ -1,8 +1,20 @@
-import { customerAuthOrigin, customerToken, getCustomerSession,
-  InvalidCustomerRequest, readObject, sameOrigin } from "../../../lib/customer-auth";
-import { acceptCustomerQuote, CommerceIssue, customerCommerceDescriptor,
-  customerCommerceEnabled, inspectCustomerQuote, latestCommerceIntent,
-  preflightCustomerCommerceDescriptor } from "../../../lib/customer-commerce";
+import {
+  customerAuthOrigin,
+  customerToken,
+  getCustomerSession,
+  InvalidCustomerRequest,
+  readObject,
+  sameOrigin,
+} from "../../../lib/customer-auth";
+import {
+  acceptCustomerQuote,
+  CommerceIssue,
+  customerCommerceDescriptor,
+  customerCommerceEnabled,
+  inspectCustomerQuote,
+  latestCommerceIntent,
+  preflightCustomerCommerceDescriptor,
+} from "../../../lib/customer-commerce";
 
 export const runtime = "nodejs";
 
@@ -28,8 +40,10 @@ export async function GET(request: Request): Promise<Response> {
     const auth = authenticate(request, false);
     if ("error" in auth) return auth.error!;
     await preflightCustomerCommerceDescriptor();
-    return json({ seller: customerCommerceDescriptor(auth.session!),
-      intent: latestCommerceIntent(auth.session!, auth.origin!) });
+    return json({
+      seller: customerCommerceDescriptor(auth.session!),
+      intent: latestCommerceIntent(auth.session!, auth.origin!),
+    });
   } catch (error) {
     if (error instanceof CommerceIssue) return json({ error: error.message }, error.status);
     return json({ error: "Signed quote review is unavailable" }, 503);
@@ -41,19 +55,43 @@ export async function POST(request: Request): Promise<Response> {
     const auth = authenticate(request, true);
     if ("error" in auth) return auth.error!;
     const body = await readObject(request);
-    if (body.action === "inspect" && Object.keys(body).sort().join(",") === "action,sequenceNumber" &&
-        Number.isSafeInteger(body.sequenceNumber) && (body.sequenceNumber as number) > 0) {
-      return json({ intent: await inspectCustomerQuote(auth.session!, auth.origin!, body.sequenceNumber as number) });
+    if (
+      body.action === "inspect" &&
+      Object.keys(body).sort().join(",") === "action,sequenceNumber" &&
+      Number.isSafeInteger(body.sequenceNumber) &&
+      (body.sequenceNumber as number) > 0
+    ) {
+      return json({
+        intent: await inspectCustomerQuote(
+          auth.session!,
+          auth.origin!,
+          body.sequenceNumber as number,
+        ),
+      });
     }
-    if (body.action === "review" && Object.keys(body).sort().join(",") === "action,intentId,signature" &&
-        typeof body.intentId === "string" && typeof body.signature === "string") {
-      return json({ intent: await acceptCustomerQuote(auth.session!, auth.origin!, body.intentId, body.signature) });
+    if (
+      body.action === "review" &&
+      Object.keys(body).sort().join(",") === "action,intentId,signature" &&
+      typeof body.intentId === "string" &&
+      typeof body.signature === "string"
+    ) {
+      return json({
+        intent: await acceptCustomerQuote(
+          auth.session!,
+          auth.origin!,
+          body.intentId,
+          body.signature,
+        ),
+      });
     }
     return json({ error: "Invalid quote review request" }, 400);
   } catch (error) {
     if (error instanceof InvalidCustomerRequest || error instanceof CommerceIssue) {
       return json({ error: error.message }, error.status);
     }
-    return json({ error: "No usable seller-signed quote was verified; review is unavailable" }, 503);
+    return json(
+      { error: "No usable seller-signed quote was verified; review is unavailable" },
+      503,
+    );
   }
 }
