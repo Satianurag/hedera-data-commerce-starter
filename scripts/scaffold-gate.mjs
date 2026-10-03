@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertScaffoldOutput } from "./scaffold-output.mjs";
+import { isNpm10LockfileRewrite } from "./scaffold-lockfile.mjs";
 import { assertPortAvailable, watchServer } from "./scaffold-server.mjs";
 
 // Validates the template: scaffold with the published CLI, then install,
@@ -21,6 +22,10 @@ import { assertPortAvailable, watchServer } from "./scaffold-server.mjs";
 const root = fileURLToPath(new URL("..", import.meta.url));
 const npm = process.env.npm_execpath;
 if (!npm) throw new Error("Run this with: npm run check:scaffold");
+const npmVersion = execFileSync(process.execPath, [npm, "--version"], {
+  encoding: "utf8",
+}).trim();
+console.log(`Scaffold toolchain: Node ${process.version}, npm ${npmVersion}`);
 const remote = process.argv.includes("--remote");
 const keep = process.argv.includes("--keep");
 const cliVersion = process.env.SCAFFOLD_HBAR_CLI_VERSION ?? "0.4.1";
@@ -55,6 +60,7 @@ function step(label, command, args, options = {}) {
 function expectedChange(file, source, generated) {
   if (file === "template.json") return generated === undefined;
   if (generated === undefined) return false;
+  if (file === "package-lock.json") return isNpm10LockfileRewrite(source, generated, npmVersion);
   if (file === "package.json" || /^packages\/[^/]+\/package\.json$/.test(file)) {
     const { packageManager, ...rest } = JSON.parse(generated.toString("utf8"));
     return (
@@ -157,7 +163,9 @@ try {
       throw new GateFailure(
         `The CLI changed or dropped ${changed.length} template file(s):\n  ${changed.join("\n  ")}`,
       );
-    console.log(`✔ All ${tracked.length} template files reached the project intact`);
+    console.log(
+      `✔ All ${tracked.length} template files preserved, except expected CLI/package-manager metadata`,
+    );
   }
 
   runNpm("fresh install", ["ci", "--engine-strict", "--no-audit", "--no-fund"]);
