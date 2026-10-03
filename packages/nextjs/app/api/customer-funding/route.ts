@@ -1,9 +1,22 @@
-import { customerAuthOrigin, customerToken, getCustomerSession,
-  InvalidCustomerRequest, readObject, sameOrigin } from "../../../lib/customer-auth";
+import {
+  customerAuthOrigin,
+  customerToken,
+  getCustomerSession,
+  InvalidCustomerRequest,
+  readObject,
+  sameOrigin,
+} from "../../../lib/customer-auth";
 import { CommerceIssue, customerCommerceEnabled } from "../../../lib/customer-commerce";
-import { attachCustomerFundingHash, customerFundingById, customerFundingHistory, openCustomerFundingWallet,
+import {
+  attachCustomerFundingHash,
+  customerFundingById,
+  customerFundingHistory,
+  openCustomerFundingWallet,
   prepareCustomerFunding,
-  reconcileCustomerFunding, resolveExpiredCustomerFunding, retryCustomerFundingWallet } from "../../../lib/customer-funding";
+  reconcileCustomerFunding,
+  resolveExpiredCustomerFunding,
+  retryCustomerFundingWallet,
+} from "../../../lib/customer-funding";
 
 export const runtime = "nodejs";
 
@@ -12,8 +25,11 @@ function json(body: unknown, status = 200): Response {
 }
 
 function newFundingEnabled(origin: URL): boolean {
-  return customerCommerceEnabled(origin) && process.env.NEURON_ENABLE_CUSTOMER_FUNDING === "true" &&
-    process.env.NEURON_ENABLE_CUSTOMER_APPROVAL === "true";
+  return (
+    customerCommerceEnabled(origin) &&
+    process.env.NEURON_ENABLE_CUSTOMER_FUNDING === "true" &&
+    process.env.NEURON_ENABLE_CUSTOMER_APPROVAL === "true"
+  );
 }
 
 function authenticate(request: Request, write: boolean) {
@@ -34,22 +50,38 @@ export async function GET(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const pageText = url.searchParams.get("page") ?? "0";
     const selectedId = url.searchParams.get("id");
-    if ([...url.searchParams.keys()].some(key => key !== "page" && key !== "id") ||
-        url.searchParams.getAll("page").length > 1 || url.searchParams.getAll("id").length > 1 ||
-        !/^(0|[1-9]\d{0,2})$/.test(pageText)) {
+    if (
+      [...url.searchParams.keys()].some((key) => key !== "page" && key !== "id") ||
+      url.searchParams.getAll("page").length > 1 ||
+      url.searchParams.getAll("id").length > 1 ||
+      !/^(0|[1-9]\d{0,2})$/.test(pageText)
+    ) {
       return json({ error: "Invalid funding history request" }, 400);
     }
     const page = Number(pageText);
     const history = customerFundingHistory(auth.session!, auth.origin!, page);
-    const existing = selectedId ? customerFundingById(auth.session!, auth.origin!, selectedId) : history.records[0] ?? null;
+    const existing = selectedId
+      ? customerFundingById(auth.session!, auth.origin!, selectedId)
+      : (history.records[0] ?? null);
     const fundingEnabled = newFundingEnabled(auth.origin!);
     if (!existing) return json({ funding: null, history, page, fundingEnabled });
     try {
       const funding = await reconcileCustomerFunding(auth.session!, auth.origin!, existing.id);
-      return json({ funding, history: customerFundingHistory(auth.session!, auth.origin!, page),
-        page, reconciliation: "current", fundingEnabled });
+      return json({
+        funding,
+        history: customerFundingHistory(auth.session!, auth.origin!, page),
+        page,
+        reconciliation: "current",
+        fundingEnabled,
+      });
     } catch {
-      return json({ funding: existing, history, page, reconciliation: "unavailable", fundingEnabled });
+      return json({
+        funding: existing,
+        history,
+        page,
+        reconciliation: "unavailable",
+        fundingEnabled,
+      });
     }
   } catch (error) {
     if (error instanceof InvalidCustomerRequest || error instanceof CommerceIssue) {
@@ -64,38 +96,90 @@ export async function POST(request: Request): Promise<Response> {
     const auth = authenticate(request, true);
     if ("error" in auth) return auth.error!;
     const body = await readObject(request);
-    if (body.action === "prepare" && Object.keys(body).sort().join(",") === "action,quoteIntentId" &&
-        typeof body.quoteIntentId === "string") {
+    if (
+      body.action === "prepare" &&
+      Object.keys(body).sort().join(",") === "action,quoteIntentId" &&
+      typeof body.quoteIntentId === "string"
+    ) {
       if (!newFundingEnabled(auth.origin!)) {
-        return json({ error: "New escrow funding requires quote review, buyer approval and funding to be enabled" }, 404);
+        return json(
+          {
+            error:
+              "New escrow funding requires quote review, buyer approval and funding to be enabled",
+          },
+          404,
+        );
       }
       return json(await prepareCustomerFunding(auth.session!, auth.origin!, body.quoteIntentId));
     }
-    if (body.action === "openWallet" && Object.keys(body).sort().join(",") === "action,fundingId" &&
-        typeof body.fundingId === "string") {
+    if (
+      body.action === "openWallet" &&
+      Object.keys(body).sort().join(",") === "action,fundingId" &&
+      typeof body.fundingId === "string"
+    ) {
       if (!newFundingEnabled(auth.origin!)) {
-        return json({ error: "New escrow funding requires quote review, buyer approval and funding to be enabled" }, 404);
+        return json(
+          {
+            error:
+              "New escrow funding requires quote review, buyer approval and funding to be enabled",
+          },
+          404,
+        );
       }
       return json(await openCustomerFundingWallet(auth.session!, auth.origin!, body.fundingId));
     }
-    if (body.action === "attach" && ["action,fundingId,transactionHash", "action,fundingId,transactionHash,walletAttemptId"].includes(Object.keys(body).sort().join(",")) &&
-        typeof body.fundingId === "string" && typeof body.transactionHash === "string" &&
-        (body.walletAttemptId === undefined || typeof body.walletAttemptId === "string")) {
-      return json({ funding: attachCustomerFundingHash(auth.session!, auth.origin!, body.fundingId, body.transactionHash, body.walletAttemptId as string | undefined) });
+    if (
+      body.action === "attach" &&
+      [
+        "action,fundingId,transactionHash",
+        "action,fundingId,transactionHash,walletAttemptId",
+      ].includes(Object.keys(body).sort().join(",")) &&
+      typeof body.fundingId === "string" &&
+      typeof body.transactionHash === "string" &&
+      (body.walletAttemptId === undefined || typeof body.walletAttemptId === "string")
+    ) {
+      return json({
+        funding: attachCustomerFundingHash(
+          auth.session!,
+          auth.origin!,
+          body.fundingId,
+          body.transactionHash,
+          body.walletAttemptId as string | undefined,
+        ),
+      });
     }
-    if (body.action === "retryWallet" && Object.keys(body).sort().join(",") === "acknowledged,action,fundingId" &&
-        typeof body.fundingId === "string" && body.acknowledged === true) {
+    if (
+      body.action === "retryWallet" &&
+      Object.keys(body).sort().join(",") === "acknowledged,action,fundingId" &&
+      typeof body.fundingId === "string" &&
+      body.acknowledged === true
+    ) {
       if (!newFundingEnabled(auth.origin!)) {
-        return json({ error: "Funding retry requires quote review, buyer approval and funding to be enabled" }, 404);
+        return json(
+          {
+            error: "Funding retry requires quote review, buyer approval and funding to be enabled",
+          },
+          404,
+        );
       }
-      return json(await retryCustomerFundingWallet(auth.session!, auth.origin!, body.fundingId, true));
+      return json(
+        await retryCustomerFundingWallet(auth.session!, auth.origin!, body.fundingId, true),
+      );
     }
-    if (body.action === "reconcile" && Object.keys(body).sort().join(",") === "action,fundingId" &&
-        typeof body.fundingId === "string") {
-      return json({ funding: await reconcileCustomerFunding(auth.session!, auth.origin!, body.fundingId) });
+    if (
+      body.action === "reconcile" &&
+      Object.keys(body).sort().join(",") === "action,fundingId" &&
+      typeof body.fundingId === "string"
+    ) {
+      return json({
+        funding: await reconcileCustomerFunding(auth.session!, auth.origin!, body.fundingId),
+      });
     }
-    if (body.action === "resolveExpired" && Object.keys(body).sort().join(",") === "action,fundingId" &&
-        typeof body.fundingId === "string") {
+    if (
+      body.action === "resolveExpired" &&
+      Object.keys(body).sort().join(",") === "action,fundingId" &&
+      typeof body.fundingId === "string"
+    ) {
       return json(await resolveExpiredCustomerFunding(auth.session!, auth.origin!, body.fundingId));
     }
     return json({ error: "Invalid funding request" }, 400);

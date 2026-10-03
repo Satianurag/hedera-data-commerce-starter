@@ -11,11 +11,32 @@ contract RejectingSeller {
     receive() external payable { revert("reject payout"); }
 }
 
+contract ReenteringSeller {
+    BuyerEscrow private immutable escrow;
+    uint256 private target;
+    bool private attempted;
+    bool public reentrySucceeded;
+
+    constructor(BuyerEscrow escrow_) { escrow = escrow_; }
+
+    function withdraw(uint256 id) external {
+        target = id;
+        escrow.withdraw(id);
+    }
+
+    receive() external payable {
+        if (attempted) return;
+        attempted = true;
+        (reentrySucceeded,) = address(escrow).call(abi.encodeCall(BuyerEscrow.withdraw, (target)));
+    }
+}
+
 interface Vm {
     function deal(address who, uint256 balance) external;
     function prank(address sender) external;
     function warp(uint256 timestamp) external;
     function expectRevert() external;
+    function expectRevert(bytes calldata reason) external;
 }
 
 contract BuyerEscrowTest {
@@ -129,6 +150,53 @@ contract BuyerEscrowTest {
         vm.prank(seller);
         vm.expectRevert();
         escrow.withdraw(1);
+    }
+
+    function assertStrangerCannotRefundAtDeadline(bool approveFirst) private {
+        uint64 due = fund();
+        if (approveFirst) escrow.approve(1);
+        vm.warp(due);
+        uint256 buyerBefore = address(this).balance;
+        uint256 strangerBefore = stranger.balance;
+        vm.prank(stranger);
+        vm.expectRevert(bytes("not active buyer"));
+        escrow.refund(1);
+        (,,,,,, BuyerEscrow.State state) = escrow.escrows(1);
+        require(state == (approveFirst ? BuyerEscrow.State.Approved : BuyerEscrow.State.Funded), "stranger changed state");
+        require(address(escrow).balance == amount, "stranger changed custody");
+        require(address(this).balance == buyerBefore && stranger.balance == strangerBefore, "stranger caused transfer");
+        escrow.refund(1);
+        require(address(this).balance == buyerBefore + amount && address(escrow).balance == 0, "buyer refund unavailable");
+    }
+
+    function testStrangerCannotRefundFundedEscrowAtDeadline() public {
+        assertStrangerCannotRefundAtDeadline(false);
+    }
+
+    function testStrangerCannotRefundApprovedEscrowAtDeadline() public {
+        assertStrangerCannotRefundAtDeadline(true);
+    }
+
+    function testSellerCallbackCannotDrainAnotherEscrow() public {
+        ReenteringSeller attacker = new ReenteringSeller(escrow);
+        uint64 due = uint64(block.timestamp + 3600);
+        uint256 first = escrow.fund{value: amount}(address(attacker), uint64(block.timestamp), due, keccak256("attacker"));
+        vm.deal(stranger, amount);
+        vm.prank(stranger);
+        uint256 second = escrow.fund{value: amount}(seller, uint64(block.timestamp), due, keccak256("other escrow"));
+        escrow.approve(first);
+        attacker.withdraw(first);
+        require(!attacker.reentrySucceeded(), "same escrow paid twice during callback");
+        require(address(attacker).balance == amount, "seller payout was not exact");
+        require(address(escrow).balance == amount, "another escrow's funds were drained");
+        (,,,,,, BuyerEscrow.State firstState) = escrow.escrows(first);
+        (,,,,,, BuyerEscrow.State secondState) = escrow.escrows(second);
+        require(firstState == BuyerEscrow.State.Paid && secondState == BuyerEscrow.State.Funded, "callback changed other escrow");
+        vm.warp(due);
+        uint256 buyerBefore = stranger.balance;
+        vm.prank(stranger);
+        escrow.refund(second);
+        require(stranger.balance == buyerBefore + amount && address(escrow).balance == 0, "other buyer funds not recoverable");
     }
 
     function testBuyerCannotApproveAfterDeadline() public {

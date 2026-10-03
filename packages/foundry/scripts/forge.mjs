@@ -4,7 +4,14 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 
 const require = createRequire(import.meta.url);
-const platform = process.platform === "darwin" ? "darwin" : process.platform === "linux" ? "linux" : process.platform === "win32" ? "win32" : null;
+const platform =
+  process.platform === "darwin"
+    ? "darwin"
+    : process.platform === "linux"
+      ? "linux"
+      : process.platform === "win32"
+        ? "win32"
+        : null;
 const architecture = process.arch === "arm64" ? "arm64" : process.arch === "x64" ? "amd64" : null;
 if (!platform || !architecture || (platform === "win32" && architecture === "arm64")) {
   throw new Error(`Foundry does not support ${process.platform}/${process.arch}`);

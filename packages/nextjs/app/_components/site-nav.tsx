@@ -18,8 +18,13 @@ export default function SiteNav() {
   return (
     <nav aria-label="Main navigation" className="site-nav">
       {links.map(({ href, label }) => {
-        const active = href === "/" ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
-        return <Link key={href} href={href} aria-current={active ? "page" : undefined}>{label}</Link>;
+        const active =
+          href === "/" ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
+        return (
+          <Link key={href} href={href} aria-current={active ? "page" : undefined}>
+            {label}
+          </Link>
+        );
       })}
     </nav>
   );

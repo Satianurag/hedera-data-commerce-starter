@@ -20,15 +20,23 @@ async function sharedToken(): Promise<Buffer> {
   const path = process.env.NEURON_SESSION_TOKEN_FILE;
   if (!path || !isAbsolute(path)) throw new Error("Gateway token path must be absolute");
   const parent = await lstat(dirname(path));
-  if (!parent.isDirectory() || parent.isSymbolicLink() || (parent.mode & 0o077) !== 0 ||
-      (process.getuid && parent.uid !== process.getuid())) {
+  if (
+    !parent.isDirectory() ||
+    parent.isSymbolicLink() ||
+    (parent.mode & 0o077) !== 0 ||
+    (process.getuid && parent.uid !== process.getuid())
+  ) {
     throw new Error("Gateway token directory must be owner-only");
   }
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const info = await file.stat();
-    if (!info.isFile() || (info.mode & 0o077) !== 0 || info.size > 128 ||
-        (process.getuid && info.uid !== process.getuid())) {
+    if (
+      !info.isFile() ||
+      (info.mode & 0o077) !== 0 ||
+      info.size > 128 ||
+      (process.getuid && info.uid !== process.getuid())
+    ) {
       throw new Error("Gateway token file must be owner-only");
     }
     const value = (await file.readFile("utf8")).trim();
@@ -40,8 +48,12 @@ async function sharedToken(): Promise<Buffer> {
 }
 
 export async function POST(request: Request): Promise<Response> {
-  if (process.env.HEDERA_NETWORK !== "testnet" || process.env.NEURON_ENABLE_CUSTOMER_AUTH !== "true" ||
-      (process.env.NEURON_ENABLE_LOCAL_STREAM !== "true" && process.env.NEURON_ENABLE_REMOTE_STREAM !== "true")) {
+  if (
+    process.env.HEDERA_NETWORK !== "testnet" ||
+    process.env.NEURON_ENABLE_CUSTOMER_AUTH !== "true" ||
+    (process.env.NEURON_ENABLE_LOCAL_STREAM !== "true" &&
+      process.env.NEURON_ENABLE_REMOTE_STREAM !== "true")
+  ) {
     return json({ error: "Gateway session verification is disabled" }, 404);
   }
   let origin: URL;
@@ -53,7 +65,10 @@ export async function POST(request: Request): Promise<Response> {
     return json({ error: "Customer authentication is unavailable" }, 503);
   }
 
-  if ((request.headers.get("content-length") ?? "0") !== "0" || request.headers.has("transfer-encoding")) {
+  if (
+    (request.headers.get("content-length") ?? "0") !== "0" ||
+    request.headers.has("transfer-encoding")
+  ) {
     return json({ error: "Request body is not allowed" }, 400);
   }
   if (request.body) {
@@ -71,8 +86,14 @@ export async function POST(request: Request): Promise<Response> {
   const timestamp = request.headers.get("x-neuron-timestamp") ?? "";
   const nonce = request.headers.get("x-neuron-nonce") ?? "";
   const auth = request.headers.get("x-neuron-auth") ?? "";
-  if (!hex32.test(sessionId) || !ownerPattern.test(ownerLower) || !hex32.test(instanceId) ||
-      !timestampPattern.test(timestamp) || !hex32.test(nonce) || !hex64.test(auth)) {
+  if (
+    !hex32.test(sessionId) ||
+    !ownerPattern.test(ownerLower) ||
+    !hex32.test(instanceId) ||
+    !timestampPattern.test(timestamp) ||
+    !hex32.test(nonce) ||
+    !hex64.test(auth)
+  ) {
     return json({ error: "Gateway authentication failed" }, 401);
   }
   const seconds = Number(timestamp);

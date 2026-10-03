@@ -76,7 +76,7 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci --engine-strict
-      - name: Scaffold with the published CLI, install, lint, build, boot and check routes
+      - name: Scaffold with default install and formatting, verify, build, boot and check routes
         run: npm run check:scaffold
 
   go-adapters:
@@ -100,12 +100,5 @@ jobs:
         run: |
           go test ./...
           go vet ./...
-      - name: Build pinned reference adapter
-        env:
-          NEURON_REFERENCE_CACHE: ${{ runner.temp }}/neuron-reference
-        run: node packages/neuron-reference/scripts/prepare.mjs
-      - name: Check reference overlay
-        working-directory: ${{ runner.temp }}/neuron-reference/source/impl/golang
-        run: |
-          go test ./cmd/scaffold-reference
-          go vet ./cmd/scaffold-reference
+      - name: Check reference preparation, recovery, races and overlay
+        run: node --test packages/neuron-reference/scripts/prepare.integration.test.mjs
