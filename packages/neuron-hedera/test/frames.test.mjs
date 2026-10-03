@@ -24,7 +24,10 @@ test("concatenated short and long frames retain exact byte sequence", () => {
   const short = Buffer.from("5D484FDEA248F5", "hex");
   const joined = Buffer.concat([short, adsb, adsb.subarray(0, 6)]);
   const frames = framer.push(joined);
-  assert.deepEqual(frames.map(frame => Buffer.from(frame.bytes).toString("hex")), [short.toString("hex"), adsb.toString("hex")]);
+  assert.deepEqual(
+    frames.map((frame) => Buffer.from(frame.bytes).toString("hex")),
+    [short.toString("hex"), adsb.toString("hex")],
+  );
   assert.equal(frames[0].downlinkFormat, 11);
   assert.equal(frames[0].crcValid, null);
   assert.equal(framer.pendingBytes, 6);
@@ -57,7 +60,10 @@ test("identification decodes the published callsign and strips trailing padding"
   changed[5] ^= 1;
   assert.equal(decodeAircraftIdentification(changed), null);
   assert.equal(decodeAircraftIdentification(identification.subarray(0, 13)), null);
-  assert.equal(decodeAircraftIdentification(Buffer.from("8D40621D58C382D690C8AC2863A7", "hex")), null);
+  assert.equal(
+    decodeAircraftIdentification(Buffer.from("8D40621D58C382D690C8AC2863A7", "hex")),
+    null,
+  );
 });
 
 test("observations reject forged metadata, bound capacity, and reset reconnect state", () => {
@@ -65,16 +71,23 @@ test("observations reject forged metadata, bound capacity, and reset reconnect s
   const frame = new ModeSFramer().push(identification)[0];
   records.observe(frame, 1000);
   records.observe(frame, 2000);
-  assert.deepEqual(records.snapshot()[0], { icao24: "4840D6", callsign: "KLM1023",
-    callsignAt: 2000, lastSeenAt: 2000, validFrames: 2 });
-  const corrupt = Buffer.from(identification); corrupt[5] ^= 1;
+  assert.deepEqual(records.snapshot()[0], {
+    icao24: "4840D6",
+    callsign: "KLM1023",
+    callsignAt: 2000,
+    lastSeenAt: 2000,
+    validFrames: 2,
+  });
+  const corrupt = Buffer.from(identification);
+  corrupt[5] ^= 1;
   records.observe({ ...frame, bytes: corrupt, crcValid: true }, 3000);
   records.observe(frame, 500);
   assert.equal(records.snapshot()[0].lastSeenAt, 2000);
   records.observe(new ModeSFramer().push(adsb)[0], 4000);
   assert.equal(records.snapshot().length, 1);
   assert.equal(records.snapshot()[0].icao24, "406B90");
-  records.reset(); assert.deepEqual(records.snapshot(), []);
+  records.reset();
+  assert.deepEqual(records.snapshot(), []);
   assert.throws(() => new AircraftObservations(0));
 });
 

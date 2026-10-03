@@ -5,7 +5,10 @@ import vm from "node:vm";
 import test from "node:test";
 import ts from "typescript";
 
-const source = readFileSync(fileURLToPath(new URL("../app/wallet/injected.ts", import.meta.url)), "utf8");
+const source = readFileSync(
+  fileURLToPath(new URL("../app/wallet/injected.ts", import.meta.url)),
+  "utf8",
+);
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
@@ -15,7 +18,7 @@ function fixture(saved = new Map()) {
   const timers = [];
   const browser = {
     localStorage: {
-      getItem: key => saved.get(key) ?? null,
+      getItem: (key) => saved.get(key) ?? null,
       setItem: (key, value) => saved.set(key, value),
     },
     addEventListener(type, fn) {
@@ -26,27 +29,48 @@ function fixture(saved = new Map()) {
     dispatchEvent(event) {
       for (const fn of listeners.get(event.type) ?? []) fn(event);
     },
-    setTimeout(fn) { timers.push(fn); },
+    setTimeout(fn) {
+      timers.push(fn);
+    },
   };
   const commonjs = { exports: {} };
-  vm.runInNewContext(compiled, { window: browser, Event, module: commonjs, exports: commonjs.exports });
-  return { api: commonjs.exports, browser, flushTimers: () => timers.splice(0).forEach(fn => fn()) };
+  vm.runInNewContext(compiled, {
+    window: browser,
+    Event,
+    module: commonjs,
+    exports: commonjs.exports,
+  });
+  return {
+    api: commonjs.exports,
+    browser,
+    flushTimers: () => timers.splice(0).forEach((fn) => fn()),
+  };
 }
 
 function provider() {
   const listeners = new Map();
   return {
-    async request() { return null; },
-    on(type, fn) { listeners.set(type, fn); },
-    removeListener(type, fn) { if (listeners.get(type) === fn) listeners.delete(type); },
-    emit(type) { listeners.get(type)?.(); },
+    async request() {
+      return null;
+    },
+    on(type, fn) {
+      listeners.set(type, fn);
+    },
+    removeListener(type, fn) {
+      if (listeners.get(type) === fn) listeners.delete(type);
+    },
+    emit(type) {
+      listeners.get(type)?.();
+    },
   };
 }
 
 function announce(browser, uuid, name, rdns, injected) {
-  browser.dispatchEvent(Object.assign(new Event("eip6963:announceProvider"), {
-    detail: { info: { uuid, name, rdns }, provider: injected },
-  }));
+  browser.dispatchEvent(
+    Object.assign(new Event("eip6963:announceProvider"), {
+      detail: { info: { uuid, name, rdns }, provider: injected },
+    }),
+  );
 }
 
 test("two injected wallets require selection and only the selected provider can authorize actions", () => {
@@ -63,7 +87,7 @@ test("two injected wallets require selection and only the selected provider can 
   assert.equal(api.walletSnapshot().selectedId, null);
   assert.throws(() => api.selectedInjectedWallet(), /Choose the wallet/);
   const invalidations = [];
-  api.subscribeWalletInvalidation(reason => invalidations.push(reason));
+  api.subscribeWalletInvalidation((reason) => invalidations.push(reason));
   api.selectInjectedWallet("eip6963:wallet-a");
   const selected = api.selectedInjectedWallet();
   assert.equal(selected.provider, first);
@@ -149,7 +173,11 @@ test("asynchronous second provider prevents a transient single-wallet auto-selec
 
 test("provider without account/network change events cannot be selected", () => {
   const { api, browser, flushTimers } = fixture();
-  const eventless = { async request() { return null; } };
+  const eventless = {
+    async request() {
+      return null;
+    },
+  };
   browser.ethereum = eventless;
   browser.addEventListener("eip6963:requestProvider", () => {
     announce(browser, "eventless", "Eventless wallet", "example.eventless", eventless);
@@ -178,7 +206,9 @@ test("losing event support after selection invalidates the provider", () => {
 test("a provider that rejects event subscription cannot remain selected", () => {
   const { api, browser, flushTimers } = fixture();
   const injected = provider();
-  injected.on = () => { throw new Error("Subscription rejected"); };
+  injected.on = () => {
+    throw new Error("Subscription rejected");
+  };
   browser.addEventListener("eip6963:requestProvider", () => {
     announce(browser, "throwing", "Throwing wallet", "example.throwing", injected);
   });

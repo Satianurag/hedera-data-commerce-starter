@@ -1,12 +1,12 @@
 # Self-hosted testnet deployment
 
-Deploy the Next.js standalone app on a Linux x64 host with persistent storage. Add the **reference file service**, the **legacy UDP gateway**, or both only when configured. These are deployment templates; they do not provision cloud resources or imply that the current revision is running on a public host.
+Deploy the Next.js standalone app on a Linux x64 host with persistent storage. Add the **reference file service**, the **legacy UDP gateway**, or both only when configured. You supply the host, persistent storage, DNS name and TLS certificate.
 
-| Process | Listener | Public ingress |
-| --- | --- | --- |
-| Next.js app | `127.0.0.1:3000` | HTTPS through nginx |
-| Optional reference bridge | `127.0.0.1:8098` | None; authenticated app proxy only |
-| Optional legacy gateway | `127.0.0.1:9080` plus configured UDP port | `/stream` over WSS and the selected UDP port |
+| Process                   | Listener                                  | Public ingress                               |
+| ------------------------- | ----------------------------------------- | -------------------------------------------- |
+| Next.js app               | `127.0.0.1:3000`                          | HTTPS through nginx                          |
+| Optional reference bridge | `127.0.0.1:8098`                          | None; authenticated app proxy only           |
+| Optional legacy gateway   | `127.0.0.1:9080` plus configured UDP port | `/stream` over WSS and the selected UDP port |
 
 The reference service runs both P2P peers on the same host. It does not require public UDP. The legacy gateway needs inbound UDP from its selected seller. Cloud and host firewalls must both permit that traffic when the legacy adapter is used. The services require outbound access to their configured Hedera and Neuron endpoints.
 
@@ -14,7 +14,7 @@ The reference service runs both P2P peers on the same host. It does not require 
 
 Use Node **22.23.3** (`.nvmrc`) and a Linux x64 builder compatible with the target host's libc. Install and run the app with the same Node major: `better-sqlite3` contains a native binary. Do not deploy macOS `node_modules` or a macOS standalone build to Linux. Build off-host if the target has limited memory.
 
-From an authorized checkout:
+From the repository root:
 
 ```sh
 npm ci --engine-strict
@@ -69,7 +69,7 @@ For customer sign-in, set `NEURON_ENABLE_CUSTOMER_AUTH=true`, an exact HTTPS `NE
 
 ### Optional reference service
 
-Copy [config.example.json](../../packages/neuron-reference/config.example.json) to `/var/lib/neuron-customer-testnet/reference-config.json`, fill in the operator's real testnet resources, and set all key/source paths to stable files accessible to `neuron-testnet`. Keep the permitted source file outside the replaceable release directory. Create a random bearer token of at least 32 characters at `/var/lib/neuron-customer-testnet/reference-api-token`. Both configuration and token require mode 0600.
+Copy [config.example.json](../../packages/neuron-reference/config.example.json) to `/var/lib/neuron-customer-testnet/reference-config.json`, fill in the operator's real testnet resources, and set all key/source paths to stable files accessible to `neuron-testnet`. Keep the permitted source file outside the replaceable release directory. Create a random bearer token of 32–128 URL-safe characters (letters, digits, `_` or `-`), such as 64 random hex characters at `/var/lib/neuron-customer-testnet/reference-api-token`. Both configuration and token require mode 0600.
 
 The [reference unit](neuron-testnet-reference.service.template) uses those paths, keeps sessions in `/var/lib/neuron-customer-testnet/reference-sessions`, and listens only on `127.0.0.1:8098`. Install it as `neuron-testnet-reference.service`. Never expose port 8098 or proxy the bridge's `/v1` routes directly.
 
@@ -117,10 +117,10 @@ Install the result in nginx's `http` context (for example `conf.d`), validate wi
 
 Permit public TCP 443, HTTP 80 if used for certificate renewal, the selected legacy UDP port only when needed, and restricted administrative access. Keep TCP 3000/8098/9080 private. Do not change a shared cloud firewall without considering its other hosts. Configure automatic certificate renewal, validate the renewal command, and reload nginx after renewal. Retain working listener/certificate configuration before any cutover.
 
-The example process ceilings are Next 450 MB, legacy 220 MB and reference 300 MB, plus nginx and the operating system. They are limits, not evidence that all services fit on a 1 GB host. Size the host for the adapters actually enabled; build elsewhere and measure memory/disk under the intended load.
+The example process ceilings are Next 450 MB, legacy 220 MB and reference 300 MB, plus nginx and the operating system. Size the host for the adapters enabled and measure memory/disk under the intended load; build elsewhere if necessary.
 
 ## Release and recovery
 
-Run `npm run verify` on the final source before release; CI also checks Go adapters and the reference overlay without live transactions. After installation, confirm public HTTPS, private listener bindings and the selected adapter's read-only readiness. A paid checkout is a separate operator-authorized test, not a startup health check. Current proof and its limits are in [verification](../../docs/verification.md); mainnet has a [separate gate](../../docs/mainnet.md).
+Run the [verification checks](../../docs/verification.md) before release. After installation, confirm public HTTPS, private listener bindings and the selected adapter's read-only readiness. Test a paid checkout and deadline refund separately with explicit wallet approval. This deployment targets testnet; see [mainnet requirements](../../docs/mainnet.md) before planning a different network.
 
 For rollback, stop affected writes, keep the current database/journals, switch only to a compatible prior release and restart the configured services. Restore saved hashes for reconciliation before creating another transaction. Rolling back code does not roll back a Hedera transaction.

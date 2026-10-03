@@ -6,7 +6,10 @@ import { expectHcsMessage } from "./hcs-assertions";
 test("live Mirror HCS has exactly the independently recorded evidence", async ({ page }) => {
   const required = (name: string): string => {
     const value = process.env[`E2E_HCS_${name}`];
-    if (!value) throw new Error(`E2E_HCS_${name} is required; a live test must not silently skip its fixture`);
+    if (!value)
+      throw new Error(
+        `E2E_HCS_${name} is required; a live test must not silently skip its fixture`,
+      );
     return value;
   };
   const topic = required("TOPIC_ID");

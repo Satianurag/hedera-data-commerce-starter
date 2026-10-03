@@ -1,5 +1,5 @@
 import { createPublicKey } from "node:crypto";
-import { getMirrorAccount, getMirrorTopic, readJsonLimited } from "./mirror.js";
+import { getMirrorAccount, getMirrorTopic, readOnlyJson } from "./mirror.js";
 import { assertHederaId, assertNetworkConfig, type NetworkConfig } from "./network.js";
 
 export type LegacyDevice = Readonly<{
@@ -19,10 +19,15 @@ function parseDevice(value: unknown): LegacyDevice {
   const stdinTopicId = row.topic_stdin;
   const stdoutTopicId = row.topic_stdout;
   const publicKeyDerHex = row.publickey;
-  if (typeof accountId !== "string" || typeof stdinTopicId !== "string" ||
-      typeof stdoutTopicId !== "string" || typeof publicKeyDerHex !== "string" ||
-      typeof row.name !== "string" || typeof row.devicetype !== "string" ||
-      !Array.isArray(row.services)) {
+  if (
+    typeof accountId !== "string" ||
+    typeof stdinTopicId !== "string" ||
+    typeof stdoutTopicId !== "string" ||
+    typeof publicKeyDerHex !== "string" ||
+    typeof row.name !== "string" ||
+    typeof row.devicetype !== "string" ||
+    !Array.isArray(row.services)
+  ) {
     throw new Error("Invalid legacy device record");
   }
   assertHederaId(accountId, "accountId");
@@ -32,7 +37,8 @@ function parseDevice(value: unknown): LegacyDevice {
   const serviceIds = row.services.map((service: unknown) => {
     if (!service || typeof service !== "object") throw new Error("Invalid legacy service");
     const id = (service as Record<string, unknown>).service_id;
-    if (!Number.isSafeInteger(id) || (id as number) < 0) throw new Error("Invalid legacy service ID");
+    if (!Number.isSafeInteger(id) || (id as number) < 0)
+      throw new Error("Invalid legacy service ID");
     return id as number;
   });
   return {
@@ -48,15 +54,9 @@ function parseDevice(value: unknown): LegacyDevice {
 
 export async function listLegacyDevices(config: NetworkConfig): Promise<LegacyDevice[]> {
   assertNetworkConfig(config);
-  if (!config.legacyDirectoryUrl) throw new Error(`Legacy directory is not configured for ${config.network}`);
-  const response = await fetch(config.legacyDirectoryUrl, {
-    headers: { accept: "application/json" },
-    signal: AbortSignal.timeout(10_000),
-    cache: "no-store",
-    redirect: "error",
-  });
-  if (!response.ok) throw new Error(`Legacy directory returned ${response.status}`);
-  const data: unknown = await readJsonLimited(response);
+  if (!config.legacyDirectoryUrl)
+    throw new Error(`Legacy directory is not configured for ${config.network}`);
+  const data = await readOnlyJson(config.legacyDirectoryUrl, "Legacy directory");
   if (!Array.isArray(data)) throw new Error("Legacy directory response is not an array");
   if (data.length > 1000) throw new Error("Legacy directory exceeds 1000 device records");
   return data.map(parseDevice);
@@ -72,7 +72,10 @@ function compressedKeyFromDer(derHex: string): string {
   return `${y[31] % 2 ? "03" : "02"}${x.toString("hex")}`;
 }
 
-export async function checkLegacyDeviceBinding(config: NetworkConfig, device: LegacyDevice): Promise<void> {
+export async function checkLegacyDeviceBinding(
+  config: NetworkConfig,
+  device: LegacyDevice,
+): Promise<void> {
   const [account] = await Promise.all([
     getMirrorAccount(config, device.accountId),
     getMirrorTopic(config, device.stdinTopicId),
@@ -80,6 +83,8 @@ export async function checkLegacyDeviceBinding(config: NetworkConfig, device: Le
   ]);
   const expected = compressedKeyFromDer(device.publicKeyDerHex);
   if (account.key?._type !== "ECDSA_SECP256K1" || account.key.key.toLowerCase() !== expected) {
-    throw new Error(`Legacy directory key does not match Mirror account ${device.accountId} on ${config.network}`);
+    throw new Error(
+      `Legacy directory key does not match Mirror account ${device.accountId} on ${config.network}`,
+    );
   }
 }

@@ -20,9 +20,16 @@ test("absent selection retains configured gateway and exact selection matches", 
   assert.doesNotThrow(() => assertSelectedSeller("0.0.4318411", "0.0.4318411"));
 });
 test("malformed and duplicate seller query parameters fail closed", () => {
-  for (const query of ["?seller=", "?seller=0.0.0", "?seller=0.0.01", "?seller=mainnet",
-    "?seller=0.0.1%20", "?seller=0.0.1&seller=0.0.1", "?seller=0.0.1&seller=0.0.2",
-    "?seller=0.0.12345678901234567890"]) {
+  for (const query of [
+    "?seller=",
+    "?seller=0.0.0",
+    "?seller=0.0.01",
+    "?seller=mainnet",
+    "?seller=0.0.1%20",
+    "?seller=0.0.1&seller=0.0.1",
+    "?seller=0.0.1&seller=0.0.2",
+    "?seller=0.0.12345678901234567890",
+  ]) {
     assert.throws(() => selectedSeller(query), /Invalid seller selection/);
   }
 });

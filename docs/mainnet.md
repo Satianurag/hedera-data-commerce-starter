@@ -1,40 +1,24 @@
-# Mainnet release gate
+# Mainnet support
 
-**Current support:** network-bound mainnet Mirror reads. Mainnet customer sign-in, streaming and commerce are not an enabled or verified product path. Setting `HEDERA_NETWORK=mainnet` does not convert the testnet integration into a mainnet service.
+Set `HEDERA_NETWORK=mainnet` to read mainnet HCS evidence through the official Mirror Node. Customer sign-in, legacy streaming, reference commerce, native-HBAR checkout and contract deployment are **testnet-only**. Changing the network variable does not enable those features on mainnet.
 
-## Network and provider
+## Network configuration
 
-Mainnet uses chain **295**; testnet uses **296**. The shared configuration accepts only the official Mirror origin for the selected network and has no mainnet legacy directory. Mainnet EVM operations require an explicit HTTPS `HEDERA_RPC_URL` and a successful `eth_chainId` preflight. Mainnet RPC configuration rejects Hashio, loopback and literal-IP endpoints; a reported chain ID alone does not establish provider trust. [Hedera's relay documentation](https://docs.hedera.com/evm/development/json-rpc) lists network IDs and reserves Hashio for development/testing.
+| Setting                       | Mainnet behavior                                                                                                                                                         |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `HEDERA_CHAIN_ID`             | Optional assertion; must be `295` when set. Testnet uses `296`.                                                                                                          |
+| `HEDERA_MIRROR_URL`           | Defaults to `https://mainnet.mirrornode.hedera.com`; other origins are rejected.                                                                                         |
+| `NEURON_LEGACY_DIRECTORY_URL` | Unset; the template has no mainnet legacy directory.                                                                                                                     |
+| `HEDERA_RPC_URL`              | Optional for read-only browsing. If supplied, must be HTTPS without URL credentials, query or fragment. Hashio, local hostnames and literal IPs are rejected on mainnet. |
 
-Select a production relay with documented authentication, capacity, availability and incident procedures. Changing the Mirror allowlist or adding authenticated provider handling requires a reviewed adapter change. Keep provider secrets server-side. Evaluate current network fees and hosting/provider quotes on the actual release date using the [mainnet documentation](https://docs.hedera.com/networks/mainnet).
+Shared EVM helpers require an explicit relay and verify its chain ID before use. Keep provider credentials server-side. See the [environment index](environment.md) for process-specific configuration.
 
-## Required release manifest
+## Standalone HCS writer
 
-Record these values in one reviewed deployment manifest before any write. Empty entries keep the gate closed.
+The separate `npm run hcs:submit` command can submit on mainnet only with both `HEDERA_NETWORK=mainnet` and `HEDERA_ALLOW_MAINNET_WRITES=true`. It also requires an operator account/key, a valid topic and a positive fee cap, as described in [HCS setup](configuration.md#submit-hcs-evidence). Export these settings in the command's environment; it does not load the app's `.env.local`.
 
-| Area | Required information |
-| --- | --- |
-| Source | Exact source commit, lockfiles, built artifact hashes, contract source/runtime bytecode and constructor terms |
-| Identity | Fresh mainnet signer and fee-payer accounts, owner-controlled signing method, current Mirror key binding and explicit funding limits |
-| Service | Mainnet seller identity, protocol revision, service ID, signed terms, topic metadata, transport endpoint and expected peer identity |
-| Assets | Mainnet token/contract IDs and EVM addresses, token decimals, buyer/seller/payee identities, principal and allowance limits |
-| Providers | Approved RPC and Mirror policy, chain preflight, independent read comparison, quotas and failure handling |
-| Operations | Persistent host, stable DNS/TLS/WSS, required UDP ingress, capacity, access control, backups, restoration and alert ownership |
-| Custody | Contract expiry/renewal funding, customer liability accounting, deadline behavior and distinct-party refund/recovery procedure |
-| Budget | Allowed transaction types/counts, per-transaction fee/gas caps, aggregate principal plus fees, hosting/relay ceilings and expiry |
-| Decision | Named release owner, explicit approval of this bounded manifest, stop conditions and recovery steps |
+This opt-in spends real HBAR and does not enable application commerce. The configured fee is divided among chunks; SDK retries can increase aggregate fees. Save the printed transaction IDs and reconcile uncertain results before retrying.
 
-Use new mainnet resources and keys. Never relabel testnet account/topic/contract identifiers as mainnet evidence or reuse disposable test credentials. Verify each resource's metadata on the selected network. Native HBAR uses eight decimal places; RPC HBAR value uses eighteen; ERC20 decimals come from the selected token.
+## Extending commerce to mainnet
 
-## Release sequence
-
-1. Freeze the candidate and complete its testnet installation, app, wallet, delivery, settlement and recovery checks. Identify the exact protocol/seller implementation covered; different protocols need separate adapters.
-2. Implement and review the mainnet application path. Its sign-in, provider, seller, asset, contract and transport configuration must be network-specific. Removing a testnet guard by itself does not provide this implementation.
-3. Run read-only mainnet preflight against the manifest: identities, topic permissions, bytecode, assets, provider responses, host reachability and monitoring. Abort on mismatch or unverifiable state.
-4. Obtain the release owner's decision on the complete bounded manifest. `HEDERA_ALLOW_MAINNET_WRITES=true` is a command guard, not that decision.
-5. Execute only approved writes, one at a time. Reconcile receipts, independent Mirror results, contract state and balance changes before continuing. Preserve uncertain outcomes and investigate before retrying.
-6. Verify an actual authorized purchase and the agreed refund/recovery path before enabling customer commerce. Retain public transaction evidence without secrets; record only capabilities the pilot exercised.
-
-Stop when any cap, deadline, identity or provider check fails. Keep an incident path available to recover existing funds while new purchases are disabled. A read-only boot, funded escrow or successful testnet transaction is insufficient to claim a mainnet payment release.
-
-Public template submission and mainnet deployment are separate decisions. The [Scaffold-HBAR bounty](https://hedera.com/blog/scaffold-hbar-template-bounty/) requires public source and testnet transaction evidence; it does not require a mainnet launch.
+A mainnet adapter needs its own accounts, topic permissions, seller protocol, token/contract addresses, pinned runtime and provider configuration. Testnet IDs and receipts cannot be reused. Preserve wallet ownership, exact asset units, transaction journals and deadline refunds when implementing the adapter. Validate purchase, rejection, restart and refund behavior with the selected wallet and services before accepting customer funds.
