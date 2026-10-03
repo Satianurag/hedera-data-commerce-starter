@@ -35,11 +35,15 @@ export type TopicMessage = Readonly<{
 function parseMessage(value: unknown, topicId: string): MirrorMessage {
   if (!value || typeof value !== "object") throw new Error("Malformed Mirror message");
   const row = value as Partial<MirrorMessage>;
-  if (row.topic_id !== topicId || !Number.isSafeInteger(row.sequence_number) ||
-      (row.sequence_number as number) < 1 || typeof row.message !== "string" ||
-      typeof row.payer_account_id !== "string" ||
-      typeof row.consensus_timestamp !== "string" ||
-      !/^\d+\.\d{1,9}$/.test(row.consensus_timestamp)) {
+  if (
+    row.topic_id !== topicId ||
+    !Number.isSafeInteger(row.sequence_number) ||
+    (row.sequence_number as number) < 1 ||
+    typeof row.message !== "string" ||
+    typeof row.payer_account_id !== "string" ||
+    typeof row.consensus_timestamp !== "string" ||
+    !/^\d+\.\d{1,9}$/.test(row.consensus_timestamp)
+  ) {
     throw new Error("Malformed Mirror message");
   }
   assertHederaId(row.payer_account_id, "payer_account_id");
@@ -49,12 +53,20 @@ function parseMessage(value: unknown, topicId: string): MirrorMessage {
       throw new Error("Malformed Mirror chunk metadata");
     }
     const id = info.initial_transaction_id;
-    if (!id || !Number.isSafeInteger(info.number) || !Number.isSafeInteger(info.total) ||
-        info.number < 1 || info.total < 1 || info.number > info.total || info.total > 20 ||
-        typeof id.account_id !== "string" ||
-        typeof id.transaction_valid_start !== "string" ||
-        !/^\d+\.\d{1,9}$/.test(id.transaction_valid_start) ||
-        !Number.isSafeInteger(id.nonce) || typeof id.scheduled !== "boolean") {
+    if (
+      !id ||
+      !Number.isSafeInteger(info.number) ||
+      !Number.isSafeInteger(info.total) ||
+      info.number < 1 ||
+      info.total < 1 ||
+      info.number > info.total ||
+      info.total > 20 ||
+      typeof id.account_id !== "string" ||
+      typeof id.transaction_valid_start !== "string" ||
+      !/^\d+\.\d{1,9}$/.test(id.transaction_valid_start) ||
+      !Number.isSafeInteger(id.nonce) ||
+      typeof id.scheduled !== "boolean"
+    ) {
       throw new Error("Malformed Mirror chunk metadata or unsupported chunk count");
     }
     assertHederaId(id.account_id, "initial transaction account");
@@ -75,7 +87,10 @@ function transactionKey(id: TransactionId): string {
   return `${id.account_id}@${id.transaction_valid_start}/${id.nonce}/${id.scheduled}`;
 }
 
-export function latestTopicMessageFromRows(rows: readonly unknown[], topicId: string): TopicMessage | null {
+export function latestTopicMessageFromRows(
+  rows: readonly unknown[],
+  topicId: string,
+): TopicMessage | null {
   if (!rows.length) return null;
   const first = parseMessage(rows[0], topicId);
   const firstInfo = first.chunk_info;
@@ -95,40 +110,50 @@ export function latestTopicMessageFromRows(rows: readonly unknown[], topicId: st
   for (let i = 1; i < rows.length && chunks.size < firstInfo.total; i++) {
     const raw = rows[i];
     const possibleInfo = (raw as Partial<MirrorMessage> | null)?.chunk_info;
-    if (!possibleInfo || typeof possibleInfo !== "object" ||
-        !possibleInfo.initial_transaction_id ||
-        transactionKey(possibleInfo.initial_transaction_id) !== key) continue;
+    if (
+      !possibleInfo ||
+      typeof possibleInfo !== "object" ||
+      !possibleInfo.initial_transaction_id ||
+      transactionKey(possibleInfo.initial_transaction_id) !== key
+    )
+      continue;
     const row = parseMessage(raw, topicId);
     const info = row.chunk_info;
     if (!info) continue;
-    if (info.total !== firstInfo.total || row.payer_account_id !== first.payer_account_id ||
-        chunks.has(info.number)) {
+    if (
+      info.total !== firstInfo.total ||
+      row.payer_account_id !== first.payer_account_id ||
+      chunks.has(info.number)
+    ) {
       throw new Error("Inconsistent or duplicate HCS chunk");
     }
     chunks.set(info.number, row);
   }
   if (chunks.size !== firstInfo.total) return null;
   const ordered = Array.from({ length: firstInfo.total }, (_, i) => chunks.get(i + 1));
-  if (ordered.some(chunk => !chunk)) throw new Error("Missing HCS chunk");
-  const latest = ordered.reduce((a, b) => b!.sequence_number > a!.sequence_number ? b : a)!;
+  if (ordered.some((chunk) => !chunk)) throw new Error("Missing HCS chunk");
+  const latest = ordered.reduce((a, b) => (b!.sequence_number > a!.sequence_number ? b : a))!;
   return {
     topicId,
     payerAccountId: first.payer_account_id,
     consensusTimestamp: latest.consensus_timestamp,
     sequenceNumber: latest.sequence_number,
     initialTransactionId: firstInfo.initial_transaction_id,
-    bytes: Buffer.concat(ordered.map(chunk => bytesFromBase64(chunk!.message))),
+    bytes: Buffer.concat(ordered.map((chunk) => bytesFromBase64(chunk!.message))),
   };
 }
 
-export async function getLatestTopicMessage(config: NetworkConfig, topicId: string): Promise<TopicMessage | null> {
+export async function getLatestTopicMessage(
+  config: NetworkConfig,
+  topicId: string,
+): Promise<TopicMessage | null> {
   assertHederaId(topicId, "topicId");
   await getMirrorTopic(config, topicId);
   let path: string | null = `/api/v1/topics/${topicId}/messages?limit=25&order=desc`;
   const rows: unknown[] = [];
 
   for (let page = 0; path && page < 5; page++) {
-    const data = await mirrorJson(config, path) as {
+    const data = (await mirrorJson(config, path)) as {
       messages?: unknown;
       links?: { next?: unknown };
     };
@@ -139,8 +164,11 @@ export async function getLatestTopicMessage(config: NetworkConfig, topicId: stri
     const latest = latestTopicMessageFromRows(rows, topicId);
     if (latest) return latest;
     const next = data.links?.next;
-    if (next !== null && next !== undefined &&
-        (typeof next !== "string" || !next.startsWith(`/api/v1/topics/${topicId}/messages?`))) {
+    if (
+      next !== null &&
+      next !== undefined &&
+      (typeof next !== "string" || !next.startsWith(`/api/v1/topics/${topicId}/messages?`))
+    ) {
       throw new Error("Mirror pagination link escaped the selected topic");
     }
     path = typeof next === "string" ? next : null;
@@ -153,22 +181,31 @@ export async function getLatestTopicMessage(config: NetworkConfig, topicId: stri
 // A quote reference names the final HCS chunk sequence. Earlier chunks can be
 // interleaved with other submissions, so scan a bounded page window backwards.
 export async function getTopicMessageBySequence(
-  config: NetworkConfig, topicId: string, sequenceNumber: number,
+  config: NetworkConfig,
+  topicId: string,
+  sequenceNumber: number,
 ): Promise<TopicMessage> {
   assertHederaId(topicId, "topicId");
   if (!Number.isSafeInteger(sequenceNumber) || sequenceNumber < 1) {
     throw new Error("HCS sequence must be a positive safe integer");
   }
   await getMirrorTopic(config, topicId);
-  let path: string | null = `/api/v1/topics/${topicId}/messages?limit=25&order=desc&sequencenumber=lte:${sequenceNumber}`;
+  let path: string | null =
+    `/api/v1/topics/${topicId}/messages?limit=25&order=desc&sequencenumber=lte:${sequenceNumber}`;
   const rows: unknown[] = [];
   for (let page = 0; path && page < 5; page++) {
-    const data = await mirrorJson(config, path) as { messages?: unknown; links?: { next?: unknown } };
+    const data = (await mirrorJson(config, path)) as {
+      messages?: unknown;
+      links?: { next?: unknown };
+    };
     if (!Array.isArray(data.messages) || data.messages.length > 25) {
       throw new Error("Malformed or oversized Mirror message page");
     }
-    if (page === 0 && (!data.messages.length ||
-        (data.messages[0] as Partial<MirrorMessage> | null)?.sequence_number !== sequenceNumber)) {
+    if (
+      page === 0 &&
+      (!data.messages.length ||
+        (data.messages[0] as Partial<MirrorMessage> | null)?.sequence_number !== sequenceNumber)
+    ) {
       throw new Error("Selected HCS sequence does not exist");
     }
     if (page === 0 && data.messages.length) {
@@ -186,8 +223,11 @@ export async function getTopicMessageBySequence(
       return result;
     }
     const next = data.links?.next;
-    if (next !== null && next !== undefined &&
-        (typeof next !== "string" || !next.startsWith(`/api/v1/topics/${topicId}/messages?`))) {
+    if (
+      next !== null &&
+      next !== undefined &&
+      (typeof next !== "string" || !next.startsWith(`/api/v1/topics/${topicId}/messages?`))
+    ) {
       throw new Error("Mirror pagination link escaped the selected topic");
     }
     path = typeof next === "string" ? next : null;

@@ -3,14 +3,22 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expectHcsMessage, type HcsExpectation } from "./hcs-assertions";
 
-const fixture = JSON.parse(readFileSync(join(__dirname, "fixtures/hcs.json"), "utf8")) as
-  HcsExpectation & { outageTopic: string; emptyTopic: string; incompleteTopic: string; tamperedTopic: string };
-const multichunk = JSON.parse(readFileSync(join(__dirname, "fixtures/hcs-multichunk.json"), "utf8")) as HcsExpectation;
+const fixture = JSON.parse(
+  readFileSync(join(__dirname, "fixtures/hcs.json"), "utf8"),
+) as HcsExpectation & {
+  outageTopic: string;
+  emptyTopic: string;
+  incompleteTopic: string;
+  tamperedTopic: string;
+};
+const multichunk = JSON.parse(
+  readFileSync(join(__dirname, "fixtures/hcs-multichunk.json"), "utf8"),
+) as HcsExpectation;
 
 test.describe("read-only template", () => {
   test("home page introduces the starter and every section is reachable", async ({ page }) => {
     const errors: string[] = [];
-    page.on("pageerror", error => errors.push(error.message));
+    page.on("pageerror", (error) => errors.push(error.message));
     await page.goto("/");
     await expect(page.getByRole("heading", { level: 1 })).toHaveText(/customer app starts here/i);
     await expect(page.getByText(/testnet/i).first()).toBeVisible();
@@ -39,7 +47,9 @@ test.describe("read-only template", () => {
     await expect(page.locator("main").getByRole("status")).toContainText("no service records");
   });
 
-  test("evidence page verifies exact HCS bytes and payer key (server fixture)", async ({ page }) => {
+  test("evidence page verifies exact HCS bytes and payer key (server fixture)", async ({
+    page,
+  }) => {
     await page.goto("/evidence");
     await page.getByLabel("Topic ID").fill(fixture.topic);
     await page.getByRole("button", { name: "Inspect" }).click();
@@ -55,13 +65,17 @@ test.describe("read-only template", () => {
     await expect(page.getByRole("link", { name: "View topic on HashScan" })).toHaveCount(0);
   });
 
-  test("paginated and interleaved HCS chunks produce exact signed bytes (server fixture)", async ({ page }) => {
+  test("paginated and interleaved HCS chunks produce exact signed bytes (server fixture)", async ({
+    page,
+  }) => {
     await page.goto(`/evidence?topic=${multichunk.topic}`);
     await expectHcsMessage(page, multichunk);
     await expect(page.getByText(/Its recovered key also matches the HCS payer/)).toBeVisible();
   });
 
-  test("empty topic is distinct from a successfully read message (server fixture)", async ({ page }) => {
+  test("empty topic is distinct from a successfully read message (server fixture)", async ({
+    page,
+  }) => {
     await page.goto(`/evidence?topic=${fixture.emptyTopic}`);
     await expect(page.locator("main").getByRole("status")).toContainText("returned no messages");
     await expect(page.locator("dl.details")).toHaveCount(0);
@@ -74,9 +88,13 @@ test.describe("read-only template", () => {
     await expect(page.locator("dl.details")).toHaveCount(0);
   });
 
-  test("tampered signature is rejected even when Mirror bytes exist (server fixture)", async ({ page }) => {
+  test("tampered signature is rejected even when Mirror bytes exist (server fixture)", async ({
+    page,
+  }) => {
     await page.goto(`/evidence?topic=${fixture.tamperedTopic}`);
-    await expect(page.locator("main").getByRole("alert")).toContainText("envelope was detected but rejected");
+    await expect(page.locator("main").getByRole("alert")).toContainText(
+      "envelope was detected but rejected",
+    );
     await expect(page.locator("dl.details")).toHaveCount(1);
     await expect(page.getByText(/Its recovered key also matches the HCS payer/)).toHaveCount(0);
   });
@@ -90,7 +108,9 @@ test.describe("read-only template", () => {
     test.skip(!isMobile, "layout overflow is checked on the mobile project");
     for (const path of ["/", "/services", "/evidence"]) {
       await page.goto(path);
-      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      const overflow = await page.evaluate(
+        () => document.documentElement.scrollWidth - window.innerWidth,
+      );
       expect(overflow, path).toBeLessThanOrEqual(1);
     }
   });

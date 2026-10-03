@@ -1,4 +1,8 @@
-import { customerAuthOrigin, customerToken, getCustomerSession } from "../../../../lib/customer-auth";
+import {
+  customerAuthOrigin,
+  customerToken,
+  getCustomerSession,
+} from "../../../../lib/customer-auth";
 
 export const runtime = "nodejs";
 
@@ -10,8 +14,10 @@ export async function GET(request: Request): Promise<Response> {
       return Response.json({ error: "App host rejected" }, { status: 403 });
     }
     const session = getCustomerSession(origin, customerToken(request, origin));
-    return Response.json(session ?? { error: "Not signed in" },
-      { status: session ? 200 : 401, headers: { "Cache-Control": "no-store" } });
+    return Response.json(session ?? { error: "Not signed in" }, {
+      status: session ? 200 : 401,
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch {
     return Response.json({ error: "Customer session is unavailable" }, { status: 503 });
   }

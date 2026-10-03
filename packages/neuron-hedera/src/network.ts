@@ -28,9 +28,14 @@ function rpcUrlForNetwork(value: string, network: HederaNetwork): string {
   const canonical = httpsUrl(value, "HEDERA_RPC_URL");
   if (network === "mainnet") {
     const hostname = new URL(canonical).hostname.toLowerCase().replace(/\.$/, "");
-    if (hostname.endsWith(".hashio.io") || hostname === "localhost" ||
-        hostname.endsWith(".localhost") || hostname.endsWith(".local") ||
-        /^[0-9.]+$/.test(hostname) || hostname.startsWith("[")) {
+    if (
+      hostname.endsWith(".hashio.io") ||
+      hostname === "localhost" ||
+      hostname.endsWith(".localhost") ||
+      hostname.endsWith(".local") ||
+      /^[0-9.]+$/.test(hostname) ||
+      hostname.startsWith("[")
+    ) {
       throw new Error("HEDERA_RPC_URL requires a named production provider on mainnet");
     }
   }
@@ -46,8 +51,8 @@ export function networkConfigFromEnv(env: Record<string, string | undefined>): N
     throw new Error("HEDERA_CHAIN_ID does not match the selected Hedera network");
   }
 
-  const directory = env.NEURON_LEGACY_DIRECTORY_URL ??
-    (network === "testnet" ? testnetDirectoryUrl : undefined);
+  const directory =
+    env.NEURON_LEGACY_DIRECTORY_URL ?? (network === "testnet" ? testnetDirectoryUrl : undefined);
   const rpc = env.HEDERA_RPC_URL;
   const rpcUrl = rpc ? rpcUrlForNetwork(rpc, network) : undefined;
   const config = Object.freeze({
@@ -55,19 +60,26 @@ export function networkConfigFromEnv(env: Record<string, string | undefined>): N
     chainId: chainIds[network],
     mirrorBaseUrl: httpsUrl(env.HEDERA_MIRROR_URL ?? mirrorUrls[network], "HEDERA_MIRROR_URL"),
     ...(rpcUrl ? { rpcUrl } : {}),
-    ...(directory ? { legacyDirectoryUrl: httpsUrl(directory, "NEURON_LEGACY_DIRECTORY_URL") } : {}),
+    ...(directory
+      ? { legacyDirectoryUrl: httpsUrl(directory, "NEURON_LEGACY_DIRECTORY_URL") }
+      : {}),
   });
   assertNetworkConfig(config);
   return config;
 }
 
 export function assertNetworkConfig(config: NetworkConfig): void {
-  if ((config.network !== "testnet" && config.network !== "mainnet") ||
-      config.chainId !== chainIds[config.network] ||
-      config.mirrorBaseUrl !== mirrorUrls[config.network] ||
-      (config.rpcUrl !== undefined && rpcUrlForNetwork(config.rpcUrl, config.network) !== config.rpcUrl) ||
-      config.legacyDirectoryUrl !== (config.network === "testnet" ? testnetDirectoryUrl : undefined)) {
-    throw new Error("Mirror, EVM RPC or legacy directory is not approved for the selected Hedera network");
+  if (
+    (config.network !== "testnet" && config.network !== "mainnet") ||
+    config.chainId !== chainIds[config.network] ||
+    config.mirrorBaseUrl !== mirrorUrls[config.network] ||
+    (config.rpcUrl !== undefined &&
+      rpcUrlForNetwork(config.rpcUrl, config.network) !== config.rpcUrl) ||
+    config.legacyDirectoryUrl !== (config.network === "testnet" ? testnetDirectoryUrl : undefined)
+  ) {
+    throw new Error(
+      "Mirror, EVM RPC or legacy directory is not approved for the selected Hedera network",
+    );
   }
 }
 
@@ -110,10 +122,14 @@ export async function assertEvmRpcNetwork(config: NetworkConfig): Promise<void> 
   } catch {
     throw new Error("EVM RPC chain preflight returned invalid JSON");
   }
-  if (!result || typeof result !== "object" || Array.isArray(result) ||
-      (result as { jsonrpc?: unknown }).jsonrpc !== "2.0" ||
-      (result as { id?: unknown }).id !== 1 ||
-      (result as { result?: unknown }).result !== `0x${config.chainId.toString(16)}`) {
+  if (
+    !result ||
+    typeof result !== "object" ||
+    Array.isArray(result) ||
+    (result as { jsonrpc?: unknown }).jsonrpc !== "2.0" ||
+    (result as { id?: unknown }).id !== 1 ||
+    (result as { result?: unknown }).result !== `0x${config.chainId.toString(16)}`
+  ) {
     throw new Error(`EVM RPC chain does not match ${config.network}`);
   }
 }

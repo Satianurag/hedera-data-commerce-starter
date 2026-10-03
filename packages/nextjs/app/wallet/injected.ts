@@ -2,15 +2,25 @@
 
 export type WalletProvider = {
   request(args: { method: string; params?: unknown[] }): Promise<unknown>;
-  on?(event: "accountsChanged" | "chainChanged" | "disconnect", listener: (...args: unknown[]) => void): void;
-  removeListener?(event: "accountsChanged" | "chainChanged" | "disconnect", listener: (...args: unknown[]) => void): void;
+  on?(
+    event: "accountsChanged" | "chainChanged" | "disconnect",
+    listener: (...args: unknown[]) => void,
+  ): void;
+  removeListener?(
+    event: "accountsChanged" | "chainChanged" | "disconnect",
+    listener: (...args: unknown[]) => void,
+  ): void;
 };
 
 type ProviderInfo = { uuid: string; name: string; rdns: string };
 type Announcement = { info?: ProviderInfo; provider?: WalletProvider };
 export type WalletChoice = { id: string; name: string; detail: string };
-export type WalletSnapshot = { choices: readonly WalletChoice[]; selectedId: string | null;
-  revision: number; conflict: boolean };
+export type WalletSnapshot = {
+  choices: readonly WalletChoice[];
+  selectedId: string | null;
+  revision: number;
+  conflict: boolean;
+};
 type Entry = { choice: WalletChoice; provider: WalletProvider; preference: string };
 
 const entries = new Map<string, Entry>();
@@ -24,10 +34,13 @@ let started = false;
 let selectedId: string | null = null;
 let revision = 0;
 let snapshot: WalletSnapshot = { choices: [], selectedId: null, revision: 0, conflict: false };
-const emptySnapshot: WalletSnapshot = { choices: [], selectedId: null, revision: 0, conflict: false };
+const emptySnapshot: WalletSnapshot = {
+  choices: [],
+  selectedId: null,
+  revision: 0,
+  conflict: false,
+};
 let selectedListener: ((...args: unknown[]) => void) | null = null;
-
-function preference(entry: Entry): string { return entry.preference; }
 
 function requireManualChoice(...keys: string[]): void {
   for (const key of keys) ambiguousPreferences.add(key);
@@ -36,8 +49,12 @@ function requireManualChoice(...keys: string[]): void {
 
 function publish(reason?: Invalidation): void {
   if (reason) revision++;
-  snapshot = { choices: [...entries.values()].map(entry => entry.choice), selectedId, revision,
-    conflict: blockedIds.size > 0 || ambiguousPreferences.size > 0 };
+  snapshot = {
+    choices: [...entries.values()].map((entry) => entry.choice),
+    selectedId,
+    revision,
+    conflict: blockedIds.size > 0 || ambiguousPreferences.size > 0,
+  };
   for (const subscriber of subscribers) subscriber();
   if (reason) for (const subscriber of invalidationSubscribers) subscriber(reason);
 }
@@ -46,8 +63,11 @@ function unwatchSelected(): void {
   const current = selectedId && entries.get(selectedId);
   if (current && selectedListener) {
     for (const event of events) {
-      try { current.provider.removeListener?.(event, selectedListener); }
-      catch { /* A stale listener may only invalidate a later selection. */ }
+      try {
+        current.provider.removeListener?.(event, selectedListener);
+      } catch {
+        /* A stale listener may only invalidate a later selection. */
+      }
     }
   }
   selectedListener = null;
@@ -67,7 +87,7 @@ function setSelection(id: string | null): void {
     if (id) {
       const provider = entries.get(id)!.provider;
       const listener = () => publish("provider");
-      const attached: typeof events[number][] = [];
+      const attached: (typeof events)[number][] = [];
       try {
         for (const event of events) {
           attached.push(event);
@@ -76,7 +96,11 @@ function setSelection(id: string | null): void {
         selectedListener = listener;
       } catch {
         for (const event of attached) {
-          try { provider.removeListener!(event, listener); } catch { /* Selection still fails closed. */ }
+          try {
+            provider.removeListener!(event, listener);
+          } catch {
+            /* Selection still fails closed. */
+          }
         }
         selectedId = null;
         selectedListener = null;
@@ -88,9 +112,20 @@ function setSelection(id: string | null): void {
   }
 }
 
-function register(id: string, name: string, detail: string, provider: WalletProvider, key: string): void {
-  if (!provider || typeof provider.request !== "function" ||
-      typeof provider.on !== "function" || typeof provider.removeListener !== "function") return;
+function register(
+  id: string,
+  name: string,
+  detail: string,
+  provider: WalletProvider,
+  key: string,
+): void {
+  if (
+    !provider ||
+    typeof provider.request !== "function" ||
+    typeof provider.on !== "function" ||
+    typeof provider.removeListener !== "function"
+  )
+    return;
   if (blockedIds.has(id)) return;
   const existing = entries.get(id);
   if (existing) {
@@ -104,20 +139,34 @@ function register(id: string, name: string, detail: string, provider: WalletProv
     }
     return;
   }
-  if ([...entries.values()].some(entry => entry.provider === provider)) return;
-  if ([...entries.values()].some(entry => entry.preference === key)) requireManualChoice(key);
+  if ([...entries.values()].some((entry) => entry.provider === provider)) return;
+  if ([...entries.values()].some((entry) => entry.preference === key)) requireManualChoice(key);
   entries.set(id, { choice: { id, name, detail }, provider, preference: key });
   publish();
 }
 
 function announce(event: Event): void {
   const { info, provider } = (event as CustomEvent<Announcement>).detail ?? {};
-  if (!info || typeof info.uuid !== "string" || !/^[\w-]{1,80}$/.test(info.uuid) ||
-      typeof info.name !== "string" || !info.name.trim() || info.name.length > 80 ||
-      typeof info.rdns !== "string" || info.rdns.length > 160 || !provider) return;
+  if (
+    !info ||
+    typeof info.uuid !== "string" ||
+    !/^[\w-]{1,80}$/.test(info.uuid) ||
+    typeof info.name !== "string" ||
+    !info.name.trim() ||
+    info.name.length > 80 ||
+    typeof info.rdns !== "string" ||
+    info.rdns.length > 160 ||
+    !provider
+  )
+    return;
   const name = info.name.trim();
-  register(`eip6963:${info.uuid}`, name, info.rdns || "Injected wallet", provider,
-    `eip6963:${info.rdns}:${name}`);
+  register(
+    `eip6963:${info.uuid}`,
+    name,
+    info.rdns || "Injected wallet",
+    provider,
+    `eip6963:${info.rdns}:${name}`,
+  );
 }
 
 function registerLegacy(): void {
@@ -128,7 +177,8 @@ function registerLegacy(): void {
     entries.delete("legacy");
     publish();
   }
-  if (provider) register("legacy", "Browser wallet", "Legacy injected provider", provider, "legacy");
+  if (provider)
+    register("legacy", "Browser wallet", "Legacy injected provider", provider, "legacy");
 }
 
 export function discoverInjectedWallets(): void {
@@ -147,19 +197,29 @@ export function discoverInjectedWallets(): void {
 export function subscribeWallets(listener: () => void): () => void {
   subscribers.add(listener);
   discoverInjectedWallets();
-  return () => { subscribers.delete(listener); };
+  return () => {
+    subscribers.delete(listener);
+  };
 }
 
 export function subscribeWalletInvalidation(listener: (reason: Invalidation) => void): () => void {
   invalidationSubscribers.add(listener);
   discoverInjectedWallets();
-  return () => { invalidationSubscribers.delete(listener); };
+  return () => {
+    invalidationSubscribers.delete(listener);
+  };
 }
 
-export function walletSnapshot(): WalletSnapshot { return snapshot; }
-export function serverWalletSnapshot(): WalletSnapshot { return emptySnapshot; }
+export function walletSnapshot(): WalletSnapshot {
+  return snapshot;
+}
+export function serverWalletSnapshot(): WalletSnapshot {
+  return emptySnapshot;
+}
 
-export function selectInjectedWallet(id: string): void { setSelection(id); }
+export function selectInjectedWallet(id: string): void {
+  setSelection(id);
+}
 
 const walletConnectId = "walletconnect:testnet";
 
@@ -169,8 +229,13 @@ export function registerWalletConnect(provider: WalletProvider): void {
     if (selectedId === walletConnectId) setSelection(null);
     entries.delete(walletConnectId);
   }
-  register(walletConnectId, "WalletConnect", "Hedera testnet · compatible wallets including HashPack",
-    provider, walletConnectId);
+  register(
+    walletConnectId,
+    "WalletConnect",
+    "Hedera testnet · compatible wallets including HashPack",
+    provider,
+    walletConnectId,
+  );
   setSelection(walletConnectId);
 }
 
@@ -184,14 +249,25 @@ export function removeWalletConnect(provider: WalletProvider): void {
 export function selectedInjectedWallet(): { provider: WalletProvider; revision: number } {
   discoverInjectedWallets();
   const entry = selectedId && entries.get(selectedId);
-  if (!entry) throw new Error(entries.size > 1 ?
-    "Choose the wallet you want to use before signing." : "A selected EVM wallet is required.");
-  if (typeof entry.provider.on !== "function" || typeof entry.provider.removeListener !== "function") {
+  if (!entry)
+    throw new Error(
+      entries.size > 1
+        ? "Choose the wallet you want to use before signing."
+        : "A selected EVM wallet is required.",
+    );
+  if (
+    typeof entry.provider.on !== "function" ||
+    typeof entry.provider.removeListener !== "function"
+  ) {
     setSelection(null);
-    throw new Error("This wallet cannot report account or network changes. Choose a supported wallet.");
+    throw new Error(
+      "This wallet cannot report account or network changes. Choose a supported wallet.",
+    );
   }
-  if (selectedId === "legacy" &&
-      (window as Window & { ethereum?: WalletProvider }).ethereum !== entry.provider) {
+  if (
+    selectedId === "legacy" &&
+    (window as Window & { ethereum?: WalletProvider }).ethereum !== entry.provider
+  ) {
     registerLegacy();
     throw new Error("The browser wallet provider changed. Select a wallet again.");
   }

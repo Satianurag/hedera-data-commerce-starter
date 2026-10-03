@@ -33,8 +33,10 @@ async function getJson(path) {
 
 // Explicit opt-in: the public Mirror is an external dependency and may be
 // temporarily unavailable during an ordinary clean-copy test run.
-test("historical testnet withdrawal has one exact seller payout in Mirror",
-  { skip: process.env.NEURON_LIVE_SETTLEMENT_TEST !== "1" }, async () => {
+test(
+  "historical testnet withdrawal has one exact seller payout in Mirror",
+  { skip: process.env.NEURON_LIVE_SETTLEMENT_TEST !== "1" },
+  async () => {
     const [funding, withdrawal, actions, seller] = await Promise.all([
       getJson(`/api/v1/contracts/results/${fundingHash}`),
       getJson(`/api/v1/contracts/results/${withdrawalHash}`),
@@ -47,9 +49,9 @@ test("historical testnet withdrawal has one exact seller payout in Mirror",
     assert.equal(withdrawal.result, "SUCCESS");
     assert.equal(seller.account, sellerId);
     assert.equal(getAddress(seller.evm_address), getAddress(sellerAddress));
-    const events = withdrawal.logs.flatMap(log => {
-      if (log.contract_id !== contractId ||
-          getAddress(log.address) !== getAddress(contractAddress)) return [];
+    const events = withdrawal.logs.flatMap((log) => {
+      if (log.contract_id !== contractId || getAddress(log.address) !== getAddress(contractAddress))
+        return [];
       const event = released.parseLog(log);
       return event?.name === "Released" ? [event] : [];
     });
@@ -59,23 +61,24 @@ test("historical testnet withdrawal has one exact seller payout in Mirror",
     assert.equal(getAddress(events[0].args.to), getAddress(sellerAddress));
     assert.equal(events[0].args.amount, 10_000_000n);
     assert.equal(actions.links.next, null);
-    const transfers = actions.actions.filter(action => action.value > 0);
+    const transfers = actions.actions.filter((action) => action.value > 0);
     assert.equal(transfers.length, 1);
     assert.equal(transfers[0].caller, contractId);
     assert.equal(transfers[0].recipient, sellerId);
     assert.equal(transfers[0].value, 10_000_000);
     assert.equal(transfers[0].timestamp, withdrawal.timestamp);
-  });
+  },
+);
 
 async function freePort() {
   const server = createServer();
-  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const port = server.address().port;
-  await new Promise(resolve => server.close(resolve));
+  await new Promise((resolve) => server.close(resolve));
   return port;
 }
 
-test("a paid journal row without reconciliation cannot claim a verified settlement", async t => {
+test("a paid journal row without reconciliation cannot claim a verified settlement", async (t) => {
   const directory = mkdtempSync(join(tmpdir(), "neuron-settlement-"));
   chmodSync(directory, 0o700);
   t.after(() => rmSync(directory, { recursive: true, force: true }));
@@ -83,14 +86,24 @@ test("a paid journal row without reconciliation cannot claim a verified settleme
   const origin = `http://127.0.0.1:${port}`;
   const child = spawn(process.execPath, [nextBin, "start", "-H", "127.0.0.1", "-p", String(port)], {
     cwd: appDirectory,
-    env: { ...process.env, HEDERA_NETWORK: "testnet", HEDERA_RPC_URL: "",
-      NEURON_ENABLE_CUSTOMER_AUTH: "true", NEURON_ENABLE_CUSTOMER_COMMERCE_REVIEW: "true",
-      NEURON_ENABLE_CUSTOMER_FUNDING: "true", NEURON_ENABLE_CUSTOMER_APPROVAL: "false",
-      NEURON_APP_ORIGIN: origin, NEURON_CUSTOMER_DB_FILE: join(directory, "customer.sqlite"),
-      NEURON_COMMERCE_SELLER_ACCOUNT_ID: sellerId, NEURON_SELLER_ACCOUNT_ID: sellerId,
-      NEURON_COMMERCE_QUOTE_TOPIC_ID: "0.0.10", NEURON_COMMERCE_SERVICE_ID: "1",
-      HEDERA_CONTRACT_ID: contractId, HEDERA_CONTRACT_ADDRESS: contractAddress,
-      NEURON_COMMERCE_MAX_SPEND_TINYBAR: "10000000" },
+    env: {
+      ...process.env,
+      HEDERA_NETWORK: "testnet",
+      HEDERA_RPC_URL: "",
+      NEURON_ENABLE_CUSTOMER_AUTH: "true",
+      NEURON_ENABLE_CUSTOMER_COMMERCE_REVIEW: "true",
+      NEURON_ENABLE_CUSTOMER_FUNDING: "true",
+      NEURON_ENABLE_CUSTOMER_APPROVAL: "false",
+      NEURON_APP_ORIGIN: origin,
+      NEURON_CUSTOMER_DB_FILE: join(directory, "customer.sqlite"),
+      NEURON_COMMERCE_SELLER_ACCOUNT_ID: sellerId,
+      NEURON_SELLER_ACCOUNT_ID: sellerId,
+      NEURON_COMMERCE_QUOTE_TOPIC_ID: "0.0.10",
+      NEURON_COMMERCE_SERVICE_ID: "1",
+      HEDERA_CONTRACT_ID: contractId,
+      HEDERA_CONTRACT_ADDRESS: contractAddress,
+      NEURON_COMMERCE_MAX_SPEND_TINYBAR: "10000000",
+    },
     stdio: "ignore",
   });
   t.after(async () => {
@@ -101,22 +114,30 @@ test("a paid journal row without reconciliation cannot claim a verified settleme
   let ready = false;
   for (let i = 0; i < 40; i++) {
     if (child.exitCode !== null) break;
-    try { ready = (await fetch(origin, { signal: AbortSignal.timeout(1500) })).ok; } catch { /* boot */ }
+    try {
+      ready = (await fetch(origin, { signal: AbortSignal.timeout(1500) })).ok;
+    } catch {
+      /* boot */
+    }
     if (ready) break;
     await delay(150);
   }
   assert.equal(ready, true, "Next production server did not boot");
   const wallet = Wallet.createRandom();
   const challengeResponse = await fetch(origin + "/api/customer-auth/challenge", {
-    method: "POST", headers: { Origin: origin, "Content-Type": "application/json" },
+    method: "POST",
+    headers: { Origin: origin, "Content-Type": "application/json" },
     body: JSON.stringify({ address: wallet.address }),
   });
   assert.equal(challengeResponse.status, 200);
   const challenge = await challengeResponse.json();
   const verify = await fetch(origin + "/api/customer-auth/verify", {
-    method: "POST", headers: { Origin: origin, "Content-Type": "application/json" },
-    body: JSON.stringify({ challengeId: challenge.challengeId,
-      signature: await wallet.signMessage(challenge.message) }),
+    method: "POST",
+    headers: { Origin: origin, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      challengeId: challenge.challengeId,
+      signature: await wallet.signMessage(challenge.message),
+    }),
   });
   assert.equal(verify.status, 200);
   const session = await verify.json();
@@ -126,17 +147,40 @@ test("a paid journal row without reconciliation cannot claim a verified settleme
   const id = "a".repeat(32);
   const db = new Database(join(directory, "customer.sqlite"));
   try {
-    db.prepare(`INSERT INTO customer_funding_intents
+    db.prepare(
+      `INSERT INTO customer_funding_intents
       (id, quote_intent_id, session_id, owner_address, origin, state, contract_state,
        contract_id, contract_address, seller_address, terms_hash, amount_tinybar,
        quote_expires_at, refund_after, prepared_block, scan_next_block, prepared_at,
        transaction_json, confirmed_hash, escrow_id, updated_at)
-      VALUES (?, ?, ?, ?, ?, 'executed', 'paid', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, "b".repeat(32), session.sessionId, session.ownerAddress, origin,
-        contractId, contractAddress, sellerAddress, `0x${"c".repeat(64)}`, "10000000",
-        1790432400, 1790432538, 1, 1, 1, "{}", fundingHash, "1", 1);
-  } finally { db.close(); }
-  const response = await fetch(origin + `/api/customer-funding?id=${id}`, { headers: { Cookie: cookie } });
+      VALUES (?, ?, ?, ?, ?, 'executed', 'paid', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      id,
+      "b".repeat(32),
+      session.sessionId,
+      session.ownerAddress,
+      origin,
+      contractId,
+      contractAddress,
+      sellerAddress,
+      `0x${"c".repeat(64)}`,
+      "10000000",
+      1790432400,
+      1790432538,
+      1,
+      1,
+      1,
+      "{}",
+      fundingHash,
+      "1",
+      1,
+    );
+  } finally {
+    db.close();
+  }
+  const response = await fetch(origin + `/api/customer-funding?id=${id}`, {
+    headers: { Cookie: cookie },
+  });
   assert.equal(response.status, 200);
   const body = await response.json();
   assert.equal(body.reconciliation, "unavailable");
