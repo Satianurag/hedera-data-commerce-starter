@@ -1,6 +1,6 @@
 {
-  "name": "Neuron Customer App Starter",
-  "description": "Next.js Neuron service discovery, reference file delivery and Hedera evidence with separate Foundry contracts",
+  "name": "Hedera Data Commerce Starter",
+  "description": "A Scaffold-HBAR template with Neuron integrations, HCS evidence and native-HBAR escrow",
   "version": "0.1.0",
   "create-scaffold-hbar": {
     "capabilities": {

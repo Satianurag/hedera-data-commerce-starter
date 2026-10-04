@@ -37,11 +37,11 @@ export default function HomePage() {
     <>
       <section className="starter-hero" aria-labelledby="starter-title">
         <div>
-          <p className="eyebrow">Neuron × Scaffold-HBAR</p>
-          <h1 id="starter-title">Your next customer app starts here.</h1>
+          <p className="eyebrow">Scaffold-HBAR · Neuron integrations</p>
+          <h1 id="starter-title">Build your next data-service app.</h1>
           <p className="hero-description">
-            A developer template for Neuron services on Hedera. Start with service discovery, wallet
-            sessions, file delivery and verifiable payment flows. Make the application your own.
+            A Scaffold-HBAR template with Neuron integrations, HCS evidence and native-HBAR escrow.
+            Adapt its wallet, delivery and payment building blocks to your own application.
           </p>
           <div className="actions">
             <Link className="button" href="/services">
@@ -56,7 +56,7 @@ export default function HomePage() {
         <aside className="starter-context" aria-labelledby="workspace-title">
           <div className="context-heading">
             <span className="context-mark" aria-hidden="true">
-              N
+              H
             </span>
             <div>
               <h2 id="workspace-title">One starter. Clear boundaries.</h2>
