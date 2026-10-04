@@ -5,9 +5,9 @@ import SiteNav from "./_components/site-nav";
 import "./style.css";
 
 export const metadata: Metadata = {
-  title: "Neuron × Scaffold-HBAR | Developer Template",
+  title: "Hedera Data Commerce Starter",
   description:
-    "A reusable Neuron customer application template with Hedera service discovery, wallet sessions, file delivery and explicit payment flows.",
+    "A Scaffold-HBAR template with Neuron integrations, HCS evidence and native-HBAR escrow for building data-service applications.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
@@ -22,11 +22,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             <div className="brand-row">
               <Link href="/" className="brand">
                 <span className="brand-mark" aria-hidden="true">
-                  N
+                  H
                 </span>
-                <span>
-                  Neuron <span className="brand-divider">/</span> Scaffold-HBAR
-                </span>
+                <span>Hedera Data Commerce Starter</span>
               </Link>
               <span className="template-label">Developer template</span>
             </div>
@@ -38,7 +36,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         </main>
         <footer className="site-footer">
           <p>
-            Neuron × Scaffold-HBAR <span>Build on the examples. Make it yours.</span>
+            Hedera Data Commerce Starter <span>Build on the examples. Make it yours.</span>
           </p>
           <nav aria-label="Developer resources">
             <a href="https://nextjs.org/docs">Next.js</a>

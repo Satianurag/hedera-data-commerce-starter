@@ -20,7 +20,9 @@ test.describe("read-only template", () => {
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto("/");
-    await expect(page.getByRole("heading", { level: 1 })).toHaveText(/customer app starts here/i);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+      /build your next data-service app/i,
+    );
     await expect(page.getByText(/testnet/i).first()).toBeVisible();
 
     for (const path of ["/services", "/evidence", "/sessions", "/reference", "/commerce"]) {
