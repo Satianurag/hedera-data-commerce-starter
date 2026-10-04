@@ -31,7 +31,7 @@ These are starting points for your own application. The included file-service ex
 Install **Node 22.23.3 or 24.21.0 LTS** (later patches in either major are supported) and Git. `.nvmrc` selects Node 22.23.3. Use Linux, macOS or WSL2 on Windows.
 
 ```sh
-git clone https://github.com/Satianurag/neuron-customer-app-scaffold-hbar.git hedera-data-commerce
+git clone https://github.com/Satianurag/hedera-data-commerce-starter.git hedera-data-commerce
 cd hedera-data-commerce
 npm ci --engine-strict
 npm run dev
@@ -50,7 +50,7 @@ Public directory and Mirror Node reads require internet access. An unavailable s
 The Scaffold-HBAR CLI additionally requires `forge` on your PATH and a configured Git name and email. Check these with `forge --version`, `git config user.name` and `git config user.email`.
 
 ```sh
-npx create-scaffold-hbar@latest hedera-data-commerce --template Satianurag/neuron-customer-app-scaffold-hbar
+npx create-scaffold-hbar@latest hedera-data-commerce --template Satianurag/hedera-data-commerce-starter
 cd hedera-data-commerce
 npm ci --engine-strict
 npm run dev
@@ -61,13 +61,13 @@ Choose **Next.js App Router**, **Foundry**, **npm** and **testnet** when prompte
 Without a global `forge`, this command supplies the pinned executable and CLI:
 
 ```sh
-npx --yes --package=@foundry-rs/forge@1.7.1 --package=create-scaffold-hbar@0.4.1 -c 'create-scaffold-hbar hedera-data-commerce --template Satianurag/neuron-customer-app-scaffold-hbar --frontend nextjs-app --solidity-framework foundry --network testnet --skip-install --skip-hedera-skills --yes --ci --package-manager=npm'
+npx --yes --package=@foundry-rs/forge@1.7.1 --package=create-scaffold-hbar@0.4.1 -c 'create-scaffold-hbar hedera-data-commerce --template Satianurag/hedera-data-commerce-starter --frontend nextjs-app --solidity-framework foundry --network testnet --skip-install --skip-hedera-skills --yes --ci --package-manager=npm'
 cd hedera-data-commerce
 npm ci --engine-strict
 npm run dev
 ```
 
-CLI 0.4.1 has an upstream archive-extractor dependency affected by [published security advisories](https://github.com/isaacs/node-tar/security/advisories/GHSA-23hp-3jrh-7fpw). The clone-based quick start avoids that extractor. The repository URL retains its original name; both setup paths use that existing address.
+CLI 0.4.1 has an upstream archive-extractor dependency affected by [published security advisories](https://github.com/isaacs/node-tar/security/advisories/GHSA-23hp-3jrh-7fpw). The clone-based quick start avoids that extractor.
 
 ## What works by default?
 
